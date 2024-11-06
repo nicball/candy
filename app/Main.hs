@@ -19,20 +19,21 @@ import qualified Data.Text.Encoding as Text
 main :: IO ()
 main = do
   SDL.initializeAll
-  window <- SDL.createWindow "Candy" SDL.defaultWindow
+  window <- SDL.createWindow "Candy" SDL.defaultWindow { SDL.windowInitialSize = SDL.V2 1280 800 }
   renderer <- SDL.createRenderer window (-1) SDL.defaultRenderer
   mainLoop renderer
   SDL.destroyWindow window
   pure ()
   where
     mainLoop renderer = do
-      -- let fontPath = "/nix/store/mvzg44lxmj70ljnq7bc7zrr0yc4xyjc3-source-han-serif-2.001/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
-      let fontPath = "/nix/store/82vyvql4j3pbyvrb059y2wf98facdrnh-Iosevka-31.7.1/share/fonts/truetype/Iosevka-ExtendedItalic.ttf"
+      let fontPath = "/nix/store/mvzg44lxmj70ljnq7bc7zrr0yc4xyjc3-source-han-serif-2.001/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
+      -- let fontPath = "/nix/store/82vyvql4j3pbyvrb059y2wf98facdrnh-Iosevka-31.7.1/share/fonts/truetype/Iosevka-ExtendedItalic.ttf"
       SDL.rendererDrawColor renderer $= SDL.V4 255 255 255 0
       SDL.rendererDrawBlendMode renderer $= SDL.BlendNone
       SDL.clear renderer
       renderText 64 fontPath renderer (SDL.V2 10 400) "Editor with >>= Ox Power!"
       renderText 64 fontPath renderer (SDL.V2 10 200) "超级牛力#[编辑器]！ fi"
+      renderText 64 fontPath renderer (SDL.V2 10 100) "Dr.Ross, D.B.Weierstrauss, 1.5.4"
       SDL.rendererDrawColor renderer $= SDL.V4 0 0 0 0
       SDL.drawLine renderer (SDL.P (SDL.V2 0 400)) (SDL.P (SDL.V2 800 400))
       SDL.drawLine renderer (SDL.P (SDL.V2 0 200)) (SDL.P (SDL.V2 800 200))
@@ -45,7 +46,7 @@ main = do
 data Glyph = Glyph
   { glyphWidth :: Int
   , glyphHeight :: Int
-  , glyphTexture :: SDL.Texture
+  , glyphTexture :: Maybe SDL.Texture
   , glyphIndex :: Int
   , glyphLeftBearing :: Int
   , glyphTopBearing :: Int
@@ -66,16 +67,17 @@ createTexturesFromGlyphIds renderer sizePx path glyphIds =
         let
           width = FT.bWidth bitmap
           height = let res = FT.bRows bitmap in assert (res == fromIntegral (FT.bPitch bitmap)) res
-          correctedWidth = if width == 0 then fromIntegral sizePx else width
-          correctedHeight = if height == 0 then 1 else height
-        greyMap <- C.peekArray (fromIntegral height * fromIntegral width) (FT.bBuffer bitmap)
-        let argbMap = if width == 0 then replicate (sizePx * 4) 0
-                                    else concatMap (\g -> [g, 255 - g, 255 - g, 255 - g]) greyMap
-        -- putStrLn $ "creating texture " ++ show width ++ " " ++ show height
-        texture <- SDL.createTexture renderer SDL.BGRA8888 SDL.TextureAccessStatic (SDL.V2 (fromIntegral correctedWidth) (fromIntegral correctedHeight))
-        SDL.textureBlendMode texture $= SDL.BlendAlphaBlend
-        SDL.updateTexture texture Nothing (BSL.pack argbMap) (fromIntegral correctedWidth * 4)
-        pure (Glyph (fromIntegral width) (fromIntegral height) texture (fromIntegral glyphId) (fromIntegral leftBearing) (fromIntegral topBearing))
+        texture <- if width == 0 || height == 0
+          then pure Nothing
+          else do
+            greyMap <- C.peekArray (fromIntegral height * fromIntegral width) (FT.bBuffer bitmap)
+            let argbMap = concatMap (\g -> [g, 255 - g, 255 - g, 255 - g]) greyMap
+            -- putStrLn $ "creating texture " ++ show width ++ " " ++ show height
+            texture <- SDL.createTexture renderer SDL.BGRA8888 SDL.TextureAccessStatic (SDL.V2 (fromIntegral width) (fromIntegral height))
+            SDL.textureBlendMode texture $= SDL.BlendAlphaBlend
+            SDL.updateTexture texture Nothing (BSL.pack argbMap) (fromIntegral width * 4)
+            pure $ Just texture
+        pure $ Glyph (fromIntegral width) (fromIntegral height) texture (fromIntegral glyphId) (fromIntegral leftBearing) (fromIntegral topBearing)
 
 data HBAllocationError = HBAllocationError deriving (Show, Exception)
 
@@ -143,10 +145,12 @@ renderText sizePx path renderer pos text = do
       yOffset <- scale . fromIntegral <$> HB.getGlyphPositionTYOffset offset
       xAdvance <- scale . fromIntegral <$> HB.getGlyphPositionTXAdvance offset
       let leftBearing = fromIntegral (glyphLeftBearing texture)
-      let topBearing = fromIntegral (glyphTopBearing texture)
+          topBearing = fromIntegral (glyphTopBearing texture)
+          render width height texture =
+            SDL.copy renderer texture Nothing
+                     (Just (SDL.Rectangle (SDL.P (pen + SDL.V2 xOffset (-yOffset) + SDL.V2 leftBearing (-topBearing)))
+                                          (SDL.V2 (fromIntegral width) (fromIntegral height))))
       -- putStrLn $ "Rendering glyph " ++ show (glyphIndex texture) ++ " at " ++ show (pen + SDL.V2 xOffset yOffset)
-      SDL.copy renderer (glyphTexture texture) Nothing
-               (Just (SDL.Rectangle (SDL.P (pen + SDL.V2 xOffset (-yOffset) + SDL.V2 leftBearing (-topBearing)))
-                                    (SDL.V2 (fromIntegral (glyphWidth texture)) (fromIntegral (glyphHeight texture)))))
+      maybe (pure ()) (render (glyphWidth texture) (glyphHeight texture)) (glyphTexture texture)
       pure (pen + SDL.V2 xAdvance 0)
     scale x = (x * fromIntegral sizePx) `div` 1000
