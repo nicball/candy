@@ -13,7 +13,7 @@
       with nixpkgs.legacyPackages.x86_64-linux;
       haskellPackages.shellFor {
         packages = _: [ self.packages.x86_64-linux.candy ];
-        nativeBuildInputs = [ haskell-language-server cabal2nix ];
+        nativeBuildInputs = [ haskell-language-server cabal2nix cabal-install ];
       };
 
   };
