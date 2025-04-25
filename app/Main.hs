@@ -26,7 +26,7 @@ main = do
   pure ()
   where
     mainLoop renderer = do
-      let fontPath = "/nix/store/mvzg44lxmj70ljnq7bc7zrr0yc4xyjc3-source-han-serif-2.001/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
+      let fontPath = "/nix/store/lby2cfffnpqw88mn1caqwc5x8dlwbk6d-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
       -- let fontPath = "/nix/store/82vyvql4j3pbyvrb059y2wf98facdrnh-Iosevka-31.7.1/share/fonts/truetype/Iosevka-ExtendedItalic.ttf"
       SDL.rendererDrawColor renderer $= SDL.V4 255 255 255 0
       SDL.rendererDrawBlendMode renderer $= SDL.BlendNone
@@ -57,6 +57,15 @@ createTexturesFromGlyphIds renderer sizePx path glyphIds =
   FT.ft_With_FreeType \lib -> do
     FT.ft_With_Face lib path 0 \face -> do
       FT.ft_Set_Pixel_Sizes face 0 (fromIntegral sizePx)
+      bbox <- FT.frBbox <$> C.peek face
+      putStrLn $ "xMin = " <> show (FT.bbXMin bbox)
+      putStrLn $ "xMax = " <> show (FT.bbXMax bbox)
+      putStrLn $ "yMin = " <> show (FT.bbYMin bbox)
+      putStrLn $ "yMax = " <> show (FT.bbYMax bbox)
+      upem <- FT.frUnits_per_EM <$> C.peek face
+      putStrLn $ "units per EM = " <> show upem
+      nGlyphs <- FT.frNum_glyphs <$> C.peek face
+      putStrLn $ "num of glyphs = " <> show nGlyphs
       forM glyphIds \glyphId -> do
         FT.ft_Load_Glyph face (fromIntegral glyphId) 0
         glyphSlot <- FT.frGlyph <$> C.peek face
