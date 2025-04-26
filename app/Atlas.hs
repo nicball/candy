@@ -61,7 +61,7 @@ newAtlas len w h = do
       glTexImage2D GL_TEXTURE_2D 0 GL_RED (fromIntegral (w * numColumns)) (fromIntegral (h * numRows)) 0 GL_RED GL_UNSIGNED_BYTE (C.castPtr arr)
       checkGlError
   atlasGlyphIdToCell <- newIORef . LRU.newLRU . Just . fromIntegral $ len
-  atlasFreeCells <- newMVar [(x, y) | x <- [0 .. numColumns - 1], y <- [0 .. numRows - 1]]
+  atlasFreeCells <- newMVar [(x, y) | y <- [0 .. numRows - 1], x <- [0 .. numColumns - 1]]
   pure $ Atlas
     { atlasCellWidth = w
     , atlasCellHeight = h

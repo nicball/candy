@@ -15,7 +15,15 @@ import Graphics.GL
   , pattern GL_FLOAT
   , pattern GL_FALSE
   , pattern GL_POINTS
+  , pattern GL_UNPACK_ALIGNMENT
+  , pattern GL_BLEND
+  , pattern GL_SRC_ALPHA
+  , pattern GL_ONE_MINUS_SRC_ALPHA
   , GLfloat
+  , glPixelStorei
+  , glEnable
+  , glBlendFunc
+  , glGenerateMipmap
   , glClear
   , glClearColor
   , glGetUniformLocation
@@ -37,20 +45,23 @@ import FreeType
   , ft_Set_Pixel_Sizes
   , FT_FaceRec(..)
   , FT_BBox(..)
-  , FT_FaceRec(..)
   , FT_UInt
+  , FT_Int
   , ft_Load_Glyph
-  , ft_Render_Glyph, gsrBitmap, gsrBitmap_left, gsrBitmap_top, FT_Bitmap (..), FT_Int
+  , ft_Render_Glyph
+  , FT_Bitmap(..)
+  , FT_GlyphSlotRec(..)
   )
 import qualified Foreign.Storable as C
 import qualified Foreign.C.String as C
 import qualified Foreign.Ptr as C
+import qualified Foreign.Marshal.Array as C
 import qualified Data.ByteString as BS
 import qualified GI.HarfBuzz.Functions as HB
 import qualified GI.HarfBuzz.Structs as HB
 import qualified GI.HarfBuzz.Enums as HB
 import Control.Exception (Exception, throwIO, assert)
-import Control.Monad (when, forM, unless, foldM, (<=<))
+import Control.Monad (when, forM, unless, foldM)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import Data.Function (fix)
@@ -61,11 +72,11 @@ import GL (withGLFW, withWindow, withProgram, withVAO, bindVAO, withArrayBuffer,
 import Atlas (withAtlas, Atlas (..), addGlyph)
 
 configFontSizePx :: Num a => a
-configFontSizePx = 16
+configFontSizePx = 32
 
 configFontPath :: IsString a => a
 configFontPath = "/nix/store/lby2cfffnpqw88mn1caqwc5x8dlwbk6d-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
--- "/nix/store/82vyvql4j3pbyvrb059y2wf98facdrnh-Iosevka-31.7.1/share/fonts/truetype/Iosevka-ExtendedItalic.ttf"
+  -- "/nix/store/x0rjl3c84fmq5gs88w2xggaryp3y9czn-Iosevka-32.5.0/share/fonts/truetype/Iosevka-ExtendedItalic.ttf"
 
 withFace :: FilePath -> FT_UInt -> (FT_Library -> FT_Face -> IO a) -> IO a
 withFace fontPath fontSizePx action = do
@@ -88,6 +99,9 @@ main :: IO ()
 main = do
   withGLFW . withWindow 800 600 "Candy" $ \win ->
     withProgram vertexShaderSource geometryShaderSource fragmentShaderSource \prog -> do
+      glPixelStorei GL_UNPACK_ALIGNMENT 1
+      glEnable GL_BLEND
+      glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
 
       penColor <- C.withCAString "pen_color" (glGetUniformLocation prog)
       glUniform3f penColor 0.93 0.94 0.96
@@ -100,7 +114,7 @@ main = do
 
       withFace configFontPath configFontSizePx \_ face -> do
         (cellW, cellH) <- globalBboxSize configFontSizePx face
-        withAtlas 1000 cellW cellH \atlas -> do
+        withAtlas 100 cellW cellH \atlas -> do
 
           texWidth <- C.withCAString "tex_width" (glGetUniformLocation prog)
           glUniform1f texWidth (fromIntegral (atlasWidth atlas))
@@ -114,12 +128,15 @@ main = do
             glClearColor 0.18 0.2 0.25 1
             glClear GL_COLOR_BUFFER_BIT
             array <- genVertexArray configFontSizePx configFontPath face atlas "超级牛力#[编辑器]！ fi"
+            glGenerateMipmap GL_TEXTURE_2D
             withVAO \vao -> bindVAO vao do
               withArrayBuffer \vbo -> do
                 bindArrayBuffer vbo do
-                  let array = [ 0, 0, 0, 0, 30, 600 ]
+                  -- let array = [ -200, -200, 500, 500, 0, 0 ]
                   writeArrayBuffer array
-                  print array
+                  let pa [] = pure ()
+                      pa arr = print (take 6 arr) >> pa (drop 6 arr)
+                  pa array
                   let
                     floatSize :: Num a => a
                     floatSize = fromIntegral (C.sizeOf (0 :: GLfloat))
@@ -160,7 +177,7 @@ main = do
                   topBearing = fromIntegral (gTopBearing glyph)
                   x = penX + leftBearing + xOffset
                   y = topBearing - fromIntegral (gHeight glyph) + yOffset
-              in pure (penX + xAdvance, [x, y, fromIntegral (gAtlasX glyph), fromIntegral (gAtlasY glyph), fromIntegral (gWidth glyph), fromIntegral (gHeight glyph)] : res)
+              in pure (penX + xAdvance, [x, y, fromIntegral (gWidth glyph), fromIntegral (gHeight glyph), fromIntegral (gAtlasX glyph), fromIntegral (gAtlasY glyph)] : res)
             Nothing ->
               pure (penX + xAdvance, res)
 
@@ -211,13 +228,30 @@ renderGlyphToAtlas face glyphIds atlas =
     leftBearing <- gsrBitmap_left <$> C.peek glyphSlot
     topBearing <- gsrBitmap_top <$> C.peek glyphSlot
     let
-      width = bWidth bitmap
-      height = let res = bRows bitmap in assert (res == fromIntegral (bPitch bitmap)) res
+      width = bPitch bitmap
+      height = bRows bitmap
+      eWidth = bWidth bitmap
+
+    -- putStrLn $ "pitch = " <> show width
+    -- putStrLn $ "width = " <> show eWidth
+    -- putStrLn $ "rows = " <> show height
+    -- let prln [] = pure ()
+    --     prln px = mapM_ prx (take (fromIntegral width) px) >> putChar '\n' >> prln (drop (fromIntegral width) px)
+    --     prx c = if c > 127 then putChar '#' else putChar ' '
+    -- prln =<< C.peekArray (fromIntegral width * fromIntegral height) (bBuffer bitmap)
+    -- putStrLn ""
+   
     if width == 0 || height == 0
       then pure Nothing
       else do
-        (x, y, _) <- addGlyph (fromIntegral glyphId) (fromIntegral width) (fromIntegral height) (C.castPtr (bBuffer bitmap)) atlas
-        pure (Just (Glyph x y width height leftBearing topBearing))
+        (x, y, _) <- do
+          withReversed (fromIntegral width * fromIntegral height) (fromIntegral width) (fromIntegral eWidth) (bBuffer bitmap) \buf ->
+            addGlyph (fromIntegral glyphId) (fromIntegral eWidth) (fromIntegral height) (C.castPtr buf) atlas
+        pure (Just (Glyph x y eWidth height leftBearing topBearing))
+    where
+      withReversed len ncol necol arr action = flip C.withArray action . concat . groupNRev ncol necol [] =<< C.peekArray len arr
+      groupNRev _ _ acc [] = acc
+      groupNRev ncol necol acc xs = groupNRev ncol necol (take necol xs : acc) (drop ncol xs)
 
 data HBAllocationError = HBAllocationError deriving (Show, Exception)
 
