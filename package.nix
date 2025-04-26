@@ -1,4 +1,4 @@
-{ mkDerivation, base, bytestring, containers, freetype2
+{ mkDerivation, base, bytestring, containers, file-embed, freetype2
 , gi-harfbuzz, gl, GLFW-b, lib, lrucache, text
 }:
 mkDerivation {
@@ -8,8 +8,8 @@ mkDerivation {
   isLibrary = false;
   isExecutable = true;
   executableHaskellDepends = [
-    base bytestring containers freetype2 gi-harfbuzz gl GLFW-b lrucache
-    text
+    base bytestring containers file-embed freetype2 gi-harfbuzz gl
+    GLFW-b lrucache text
   ];
   homepage = "https://github.com/nicball/candy";
   description = "Selection-based editor with eye candies";
