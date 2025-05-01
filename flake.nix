@@ -1,6 +1,8 @@
 {
   description = "Selection-based editor with eye candies.";
 
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/f02fddb8acef29a8b32f10a335d44828d7825b78";
+
   outputs = { self, nixpkgs }: {
 
     packages.x86_64-linux.candy =
