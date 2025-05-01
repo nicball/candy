@@ -24,12 +24,10 @@ import Graphics.GL
     , glGenTextures
     , glTexImage2D
     , glTexSubImage2D
-    , GLubyte
     , GLuint
     )
 import qualified Data.Cache.LRU as LRU
 import qualified Foreign.Marshal.Utils as C
-import qualified Foreign.Marshal.Array as C
 import qualified Foreign.Ptr as C
 import qualified Foreign.Storable as C
 import Data.IORef (IORef, newIORef, atomicModifyIORef')
@@ -57,9 +55,9 @@ newAtlas len w h = do
   let numColumns = truncate (sqrt (fromIntegral len :: Double))
       numRows = len `div` numColumns
   withTexture2D atlasTexture do
-    C.withArray (replicate (w * h * numColumns * numRows) (0 :: GLubyte) ) \arr -> do
-      glTexImage2D GL_TEXTURE_2D 0 GL_RED (fromIntegral (w * numColumns)) (fromIntegral (h * numRows)) 0 GL_RED GL_UNSIGNED_BYTE (C.castPtr arr)
-      checkGlError
+    -- C.withArray (replicate (w * h * numColumns * numRows) (0 :: GLubyte) ) \arr -> do
+    glTexImage2D GL_TEXTURE_2D 0 GL_RED (fromIntegral (w * numColumns)) (fromIntegral (h * numRows)) 0 GL_RED GL_UNSIGNED_BYTE C.nullPtr
+    checkGlError
   atlasGlyphIdToCell <- newIORef . LRU.newLRU . Just . fromIntegral $ len
   atlasFreeCells <- newMVar [(x, y) | y <- [0 .. numRows - 1], x <- [0 .. numColumns - 1]]
   pure $ Atlas
