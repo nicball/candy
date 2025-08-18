@@ -28,9 +28,13 @@ import Config (Config(..))
 
 config :: Config
 config = Config
-  { configFontSizePx = 32
+  { configFontSizePx = 64
   , configFontPath = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
-      -- "/nix/store/x0rjl3c84fmq5gs88w2xggaryp3y9czn-Iosevka-32.5.0/share/fonts/truetype/Iosevka-ExtendedItalic.ttf"
+  -- , configFontPath = "/nix/store/569nxifmwb4r26phghxyn4xszdg7xjxm-source-han-sans-2.004/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
+  -- , configFontPath = "/nix/store/vl44mgyhq46plr28vfj06zj9lk89jyaw-liberation-fonts-2.1.5/share/fonts/truetype/LiberationSans-Regular.ttf"
+  -- , configFontPath = "/nix/store/hibcvpqv3w7s7fpl3wgd8c33hs0znywq-Iosevka-33.2.3/share/fonts/truetype/Iosevka-ExtendedMedium.ttf"
+  -- , configFontPath = "./font.ttf"
+  -- , configFontPath = "/nix/store/46g6p6698lc50ypik6mgg0wf3q23gzqz-dejavu-fonts-2.37/share/fonts/truetype/DejaVuSansMono.ttf"
   , configForeground = (0.93, 0.94, 0.96)
   , configBackground = (0.18, 0.2, 0.25)
   }
@@ -49,7 +53,7 @@ main = do
         let (clearColorR, clearColorG, clearColorB) = configBackground config
         glClearColor clearColorR clearColorG clearColorB 1
         glClear GL_COLOR_BUFFER_BIT
-        drawText weaver "超级牛力#[编辑器]! office"
+        drawText weaver "file is filling, 你好啊"
         GLFW.swapBuffers win
         GLFW.waitEvents
         c <- GLFW.windowShouldClose win

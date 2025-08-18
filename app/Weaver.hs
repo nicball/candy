@@ -50,7 +50,7 @@ import qualified Foreign.C.String as C
 import qualified Foreign.Ptr as C
 import qualified Foreign.Marshal.Array as C
 import qualified Data.ByteString as BS
-import Control.Monad (forM, forM_, foldM)
+import Control.Monad (forM, foldM)
 import qualified Data.Text as Text
 import qualified Data.Text.Foreign as Text
 import Data.Word (Word32)
@@ -66,7 +66,6 @@ data Weaver = Weaver
   , weaverFtLib :: FT_Library
   , weaverFtFace :: FT_Face
   , weaverRaqm :: Raqm.Raqm
-  , weaverPpem :: Int
   }
 
 withWeaver :: Config -> (Weaver -> IO a) -> IO a
@@ -91,7 +90,6 @@ withWeaver config action = do
             , weaverFtLib
             , weaverFtFace
             , weaverRaqm
-            , weaverPpem = configFontSizePx config
             }
 
 setResolution :: Int -> Int -> Weaver -> IO ()
@@ -128,17 +126,14 @@ drawText weaver text = do
           glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 6))
   where
     genVertexArray = do
-      let ppem = weaverPpem weaver
-      upem <- frUnits_per_EM <$> C.peek (weaverFtFace weaver)
-      let scaleFactor = fromIntegral ppem / fromIntegral upem
       glyphs <- shapeText weaver text
       renderedGlyphs <- renderGlyphToAtlas weaver (Raqm.gIndex <$> glyphs)
-      concat . reverse . snd <$> foldM (renderGlyph scaleFactor) (0, []) (zip glyphs renderedGlyphs)
+      concat . reverse . snd <$> foldM renderGlyph (0, []) (zip glyphs renderedGlyphs)
       where
-        renderGlyph scaleFactor (penX, res) (glyph, mRenderedGlyph) = do
-          let xOffset = scale . fromIntegral . Raqm.gXOffset $ glyph
-          let yOffset = scale . fromIntegral . Raqm.gYOffset $ glyph
-          let xAdvance = scale . fromIntegral . Raqm.gXAdvance $ glyph
+        renderGlyph (penX, res) (glyph, mRenderedGlyph) = do
+          let xOffset = fromIntegral . (`div` 64) . Raqm.gXOffset $ glyph
+          let yOffset = fromIntegral . (`div` 64) . Raqm.gYOffset $ glyph
+          let xAdvance = fromIntegral . (`div` 64) . Raqm.gXAdvance $ glyph
           case mRenderedGlyph of
             Just rg->
               let leftBearing = fromIntegral (gLeftBearing rg)
@@ -148,8 +143,6 @@ drawText weaver text = do
               in pure (penX + xAdvance, [x, y, fromIntegral (gWidth rg), fromIntegral (gHeight rg), fromIntegral (gAtlasX rg), fromIntegral (gAtlasY rg)] : res)
             Nothing ->
               pure (penX + xAdvance, res)
-          where
-            scale x = x * scaleFactor
 
 withFace :: FilePath -> Int -> (FT_Library -> FT_Face -> IO a) -> IO a
 withFace fontPath fontSizePx action = do
