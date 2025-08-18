@@ -69,7 +69,8 @@ executable candy
     Atlas,
     GL,
     Config,
-    Weaver
+    Weaver,
+    Raqm
 
   extra-source-files:
     app/weaver.vert
@@ -81,7 +82,7 @@ executable candy
 
   -- Other library packages from which modules are imported.
   build-depends:
-    base ^>=4.18.2.1,
+    base,
     freetype2,
     bytestring,
     gi-harfbuzz,
@@ -90,7 +91,11 @@ executable candy
     GLFW-b,
     containers,
     lrucache,
-    file-embed
+    file-embed,
+    text-icu
+
+  pkgconfig-depends:
+    raqm
 
   -- Directories containing source files.
   hs-source-dirs:   app

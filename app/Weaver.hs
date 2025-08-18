@@ -50,26 +50,23 @@ import qualified Foreign.C.String as C
 import qualified Foreign.Ptr as C
 import qualified Foreign.Marshal.Array as C
 import qualified Data.ByteString as BS
-import qualified GI.HarfBuzz.Functions as HB
-import qualified GI.HarfBuzz.Structs as HB
-import qualified GI.HarfBuzz.Enums as HB
-import Control.Exception (Exception, throwIO, assert)
-import Control.Monad (when, forM, foldM)
+import Control.Monad (forM, forM_, foldM)
 import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
+import qualified Data.Text.Foreign as Text
 import Data.Word (Word32)
 
 import GL (withProgram, withVAO, bindVAO, withArrayBuffer, bindArrayBuffer, writeArrayBuffer, withTexture2D)
 import Atlas (withAtlas, Atlas (..), addGlyph)
 import Config (Config(..))
+import qualified Raqm
 
 data Weaver = Weaver
   { weaverProgram :: GLuint
   , weaverAtlas :: Atlas
   , weaverFtLib :: FT_Library
   , weaverFtFace :: FT_Face
-  , weaverHbFace :: HB.FaceT
-  , weaverHbFont :: HB.FontT
+  , weaverRaqm :: Raqm.Raqm
+  , weaverPpem :: Int
   }
 
 withWeaver :: Config -> (Weaver -> IO a) -> IO a
@@ -87,15 +84,15 @@ withWeaver config action = do
         penColor <- C.withCAString "pen_color" (glGetUniformLocation weaverProgram)
         let (penColorR, penColorG, penColorB) = configForeground config
         glUniform3f penColor penColorR penColorG penColorB
-        (weaverHbFace, weaverHbFont) <- createHBFontFromPath (configFontSizePx config) (configFontPath config)
-        action Weaver
-          { weaverProgram
-          , weaverAtlas
-          , weaverFtLib
-          , weaverFtFace
-          , weaverHbFace
-          , weaverHbFont
-          }
+        Raqm.withRaqm \weaverRaqm ->
+          action Weaver
+            { weaverProgram
+            , weaverAtlas
+            , weaverFtLib
+            , weaverFtFace
+            , weaverRaqm
+            , weaverPpem = configFontSizePx config
+            }
 
 setResolution :: Int -> Int -> Weaver -> IO ()
 setResolution w h Weaver{weaverProgram = prog} = do
@@ -131,29 +128,28 @@ drawText weaver text = do
           glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 6))
   where
     genVertexArray = do
-      (ppem, _) <- HB.fontGetPpem (weaverHbFont weaver)
-      upem <- HB.faceGetUpem (weaverHbFace weaver)
+      let ppem = weaverPpem weaver
+      upem <- frUnits_per_EM <$> C.peek (weaverFtFace weaver)
       let scaleFactor = fromIntegral ppem / fromIntegral upem
-      (glyphInfos, glyphPoss) <- unzip <$> shapeText weaver text
-      glyphIds <- mapM HB.getGlyphInfoTCodepoint glyphInfos
-      glyphs <- renderGlyphToAtlas weaver glyphIds
-      concat . reverse . snd <$> foldM (renderGlyph scaleFactor) (0, []) (zip glyphPoss glyphs)
+      glyphs <- shapeText weaver text
+      renderedGlyphs <- renderGlyphToAtlas weaver (Raqm.gIndex <$> glyphs)
+      concat . reverse . snd <$> foldM (renderGlyph scaleFactor) (0, []) (zip glyphs renderedGlyphs)
       where
-        renderGlyph scaleFactor (penX, res) (offset, mGlyph) = do
-          xOffset <- scale . fromIntegral <$> HB.getGlyphPositionTXOffset offset
-          yOffset <- scale . fromIntegral <$> HB.getGlyphPositionTYOffset offset
-          xAdvance <- scale . fromIntegral <$> HB.getGlyphPositionTXAdvance offset
-          case mGlyph of
-            Just glyph ->
-              let leftBearing = fromIntegral (gLeftBearing glyph)
-                  topBearing = fromIntegral (gTopBearing glyph)
+        renderGlyph scaleFactor (penX, res) (glyph, mRenderedGlyph) = do
+          let xOffset = scale . fromIntegral . Raqm.gXOffset $ glyph
+          let yOffset = scale . fromIntegral . Raqm.gYOffset $ glyph
+          let xAdvance = scale . fromIntegral . Raqm.gXAdvance $ glyph
+          case mRenderedGlyph of
+            Just rg->
+              let leftBearing = fromIntegral (gLeftBearing rg)
+                  topBearing = fromIntegral (gTopBearing rg)
                   x = penX + leftBearing + xOffset
-                  y = topBearing - fromIntegral (gHeight glyph) + yOffset
-              in pure (penX + xAdvance, [x, y, fromIntegral (gWidth glyph), fromIntegral (gHeight glyph), fromIntegral (gAtlasX glyph), fromIntegral (gAtlasY glyph)] : res)
+                  y = topBearing - fromIntegral (gHeight rg) + yOffset
+              in pure (penX + xAdvance, [x, y, fromIntegral (gWidth rg), fromIntegral (gHeight rg), fromIntegral (gAtlasX rg), fromIntegral (gAtlasY rg)] : res)
             Nothing ->
               pure (penX + xAdvance, res)
           where
-            scale = (* scaleFactor)
+            scale x = x * scaleFactor
 
 withFace :: FilePath -> Int -> (FT_Library -> FT_Face -> IO a) -> IO a
 withFace fontPath fontSizePx action = do
@@ -181,7 +177,7 @@ geometryShaderSource = $(embedFileRelative "./app/weaver.geom")
 fragmentShaderSource :: BS.ByteString
 fragmentShaderSource = $(embedFileRelative "./app/weaver.frag")
 
-data Glyph = Glyph
+data RenderedGlyph = RenderedGlyph
   { gAtlasX :: Int
   , gAtlasY :: Int
   , gWidth :: Word32
@@ -190,7 +186,7 @@ data Glyph = Glyph
   , gTopBearing :: FT_Int
   }
 
-renderGlyphToAtlas :: Integral a => Weaver -> [a] -> IO [Maybe Glyph]
+renderGlyphToAtlas :: Integral a => Weaver -> [a] -> IO [Maybe RenderedGlyph]
 renderGlyphToAtlas weaver glyphIds =
   forM glyphIds \glyphId -> do
     ft_Load_Glyph (weaverFtFace weaver) (fromIntegral glyphId) 0
@@ -209,61 +205,18 @@ renderGlyphToAtlas weaver glyphIds =
         (x, y, _) <- do
           withReversed (fromIntegral width * fromIntegral height) (fromIntegral width) (fromIntegral eWidth) (bBuffer bitmap) \buf ->
             addGlyph (fromIntegral glyphId) (fromIntegral eWidth) (fromIntegral height) (C.castPtr buf) (weaverAtlas weaver)
-        pure (Just (Glyph x y eWidth height leftBearing topBearing))
+        pure (Just (RenderedGlyph x y eWidth height leftBearing topBearing))
     where
       withReversed len ncol necol arr action = flip C.withArray action . concat . groupNRev ncol necol [] =<< C.peekArray len arr
       groupNRev _ _ acc [] = acc
       groupNRev ncol necol acc xs = groupNRev ncol necol (take necol xs : acc) (drop ncol xs)
 
-data HBAllocationError = HBAllocationError deriving (Show, Exception)
-
-createHBBufferFromText :: Text.Text -> IO HB.BufferT
-createHBBufferFromText text = do
-  buffer <- HB.bufferCreate
-  code <- HB.bufferAllocationSuccessful buffer
-  when (code == 0) (throwIO HBAllocationError)
-  HB.bufferSetDirection buffer HB.DirectionTLtr
-  HB.bufferSetClusterLevel buffer HB.BufferClusterLevelTMonotoneCharacters
-  HB.bufferSetLanguage buffer =<< HB.languageFromString "zh"
-  HB.bufferSetScript buffer =<< HB.scriptFromString "Latn"
-  let utf8Text = Text.encodeUtf8 text
-  HB.bufferAddUtf8 buffer utf8Text 0 (fromIntegral (BS.length utf8Text) {-(Text.length text)-})
-  pure buffer
-
-newtype HBFontCreationError = HBFontCreationError FilePath
-  deriving Show
-  deriving anyclass Exception
-
-createHBFontFromPath :: Int -> FilePath -> IO (HB.FaceT, HB.FontT)
-createHBFontFromPath sizePx path = do
-  blob <- HB.blobCreateFromFile (Text.pack path)
-  emptyBlob <- HB.blobGetEmpty
-  when (blob == emptyBlob) (throwIO (HBFontCreationError path))
-  face <- HB.faceCreate blob 0
-  emptyFace <- HB.faceGetEmpty
-  when (face == emptyFace) (throwIO (HBFontCreationError path))
-  font <- HB.fontCreate face
-  emptyFont <- HB.fontGetEmpty
-  when (font == emptyFont) (throwIO (HBFontCreationError path))
-  HB.fontSetPpem font (fromIntegral sizePx) (fromIntegral sizePx)
-  pure (face, font)
-
-defaultFeatures :: IO [HB.FeatureT]
-defaultFeatures = do
-  mapM feature ["kern", "liga", "clig"]
-  where
-    feature str = do
-      f <- featureTag str
-      HB.setFeatureTStart f 0
-      HB.setFeatureTStart f maxBound
-      HB.setFeatureTValue f 1
-      pure f
-    featureTag str = do
-      (suc, f) <- HB.featureFromString str
-      assert (suc /= 0) (pure f)
-
-shapeText :: Weaver -> Text.Text -> IO [(HB.GlyphInfoT, HB.GlyphPositionT)]
+shapeText :: Weaver -> Text.Text -> IO [Raqm.Glyph]
 shapeText weaver text = do
-  buffer <- createHBBufferFromText text
-  HB.shape (weaverHbFont weaver) buffer . Just =<< defaultFeatures
-  liftA2 zip (HB.bufferGetGlyphInfos buffer) (HB.bufferGetGlyphPositions buffer)
+  let rq = weaverRaqm weaver
+  Raqm.clearContents rq
+  Raqm.setText rq text
+  Raqm.setLanguage rq "en" 0 (Text.lengthWord8 text)
+  Raqm.setFreetypeFace rq (weaverFtFace weaver)
+  Raqm.layout rq
+  Raqm.getGlyphs rq

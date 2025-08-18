@@ -1,5 +1,5 @@
 { mkDerivation, base, bytestring, containers, file-embed, freetype2
-, gi-harfbuzz, gl, GLFW-b, lib, lrucache, text
+, gi-harfbuzz, gl, GLFW-b, lib, lrucache, libraqm, text, text-icu
 }:
 mkDerivation {
   pname = "candy";
@@ -9,8 +9,9 @@ mkDerivation {
   isExecutable = true;
   executableHaskellDepends = [
     base bytestring containers file-embed freetype2 gi-harfbuzz gl
-    GLFW-b lrucache text
+    GLFW-b lrucache text text-icu
   ];
+  executablePkgconfigDepends = [ libraqm ];
   homepage = "https://github.com/nicball/candy";
   description = "Selection-based editor with eye candies";
   license = lib.licenses.agpl3Plus;
