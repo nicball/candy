@@ -6,7 +6,18 @@
   outputs = { self, nixpkgs }: {
 
     packages.x86_64-linux.candy =
-      with nixpkgs.legacyPackages.x86_64-linux;
+      let overlay = self: super: {
+        libraqm = super.libraqm.overrideAttrs {
+          version = "2025-08-17";
+          src = self.fetchFromGitHub {
+            owner = "HOST-Oman";
+            repo = "libraqm";
+            rev = "e63eab0cc33612d512e80089c3b076b0a0034cf9";
+            sha256 = "sha256-LB3or+Wk8NgfiuILstpSDtkthUdSGxYbPL2sWzHydSU=";
+          };
+        };
+      }; in
+      with (import nixpkgs { system = "x86_64-linux"; overlays = [ overlay ]; });
       haskellPackages.callPackage ./package.nix {};
 
     packages.x86_64-linux.default = self.packages.x86_64-linux.candy;
