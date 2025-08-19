@@ -19,8 +19,10 @@ import Graphics.GL
   , glClearColor
   , glViewport
   )
-import Control.Monad (unless)
+import Control.Monad (unless, forM_)
 import Data.Function (fix)
+import qualified Data.Text as Text
+import qualified Data.Text.IO as Text
 
 import GL (withGLFW, withWindow)
 import Weaver (drawText, setResolution, withWeaver)
@@ -28,7 +30,7 @@ import Config (Config(..))
 
 config :: Config
 config = Config
-  { configFontSizePx = 64
+  { configFontSizePx = 24
   , configFontPath = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
   -- , configFontPath = "/nix/store/569nxifmwb4r26phghxyn4xszdg7xjxm-source-han-sans-2.004/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
   -- , configFontPath = "/nix/store/vl44mgyhq46plr28vfj06zj9lk89jyaw-liberation-fonts-2.1.5/share/fonts/truetype/LiberationSans-Regular.ttf"
@@ -53,7 +55,8 @@ main = do
         let (clearColorR, clearColorG, clearColorB) = configBackground config
         glClearColor clearColorR clearColorG clearColorB 1
         glClear GL_COLOR_BUFFER_BIT
-        drawText weaver "file is filling, 你好啊"
+        Text.lines <$> Text.readFile "./app/Main.hs" >>= \lns -> forM_ (zip [1 ..] lns) \(idx, ln) ->
+          drawText weaver 30 ((-30) * idx) ln
         GLFW.swapBuffers win
         GLFW.waitEvents
         c <- GLFW.windowShouldClose win

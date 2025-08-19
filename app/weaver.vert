@@ -13,7 +13,7 @@ uniform float hori_ppu;
 uniform float vert_ppu;
 
 void main() {
-  gl_Position = vec4(v_pos.x / hori_ppu, v_pos.y / vert_ppu, 0, 1);
+  gl_Position = vec4(v_pos.x / hori_ppu - 1, v_pos.y / vert_ppu + 1, 0, 1);
   g_tex_coord = v_tex_coord;
   g_width = v_width;
   g_height = v_height;

@@ -99,8 +99,8 @@ setResolution w h Weaver{weaverProgram = prog} = do
   vertPPU <- C.withCAString "vert_ppu" (glGetUniformLocation prog)
   glUniform1f vertPPU (fromIntegral h / 2)
 
-drawText :: Weaver -> Text.Text -> IO ()
-drawText weaver text = do
+drawText :: Weaver -> Int -> Int -> Text.Text -> IO ()
+drawText weaver originX originY text = do
   withTexture2D (atlasTexture (weaverAtlas weaver)) do
     array <- genVertexArray
     glGenerateMipmap GL_TEXTURE_2D
@@ -108,9 +108,6 @@ drawText weaver text = do
       withArrayBuffer \vbo -> do
         bindArrayBuffer vbo do
           writeArrayBuffer array
-          -- let pa [] = pure ()
-          --     pa arr = print (take 6 arr) >> pa (drop 6 arr)
-          -- pa array
           let
             floatSize :: Num a => a
             floatSize = fromIntegral (C.sizeOf (0 :: GLfloat))
@@ -138,8 +135,8 @@ drawText weaver text = do
             Just rg->
               let leftBearing = fromIntegral (gLeftBearing rg)
                   topBearing = fromIntegral (gTopBearing rg)
-                  x = penX + leftBearing + xOffset
-                  y = topBearing - fromIntegral (gHeight rg) + yOffset
+                  x = penX + leftBearing + xOffset + fromIntegral originX
+                  y = topBearing - fromIntegral (gHeight rg) + yOffset + fromIntegral originY
               in pure (penX + xAdvance, [x, y, fromIntegral (gWidth rg), fromIntegral (gHeight rg), fromIntegral (gAtlasX rg), fromIntegral (gAtlasY rg)] : res)
             Nothing ->
               pure (penX + xAdvance, res)
