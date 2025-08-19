@@ -32,11 +32,13 @@ config :: Config
 config = Config
   { configFontSizePx = 24
   , configFontPath = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
+  , configFontIndex = 17
   -- , configFontPath = "/nix/store/569nxifmwb4r26phghxyn4xszdg7xjxm-source-han-sans-2.004/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
   -- , configFontPath = "/nix/store/vl44mgyhq46plr28vfj06zj9lk89jyaw-liberation-fonts-2.1.5/share/fonts/truetype/LiberationSans-Regular.ttf"
   -- , configFontPath = "/nix/store/hibcvpqv3w7s7fpl3wgd8c33hs0znywq-Iosevka-33.2.3/share/fonts/truetype/Iosevka-ExtendedMedium.ttf"
   -- , configFontPath = "./font.ttf"
   -- , configFontPath = "/nix/store/46g6p6698lc50ypik6mgg0wf3q23gzqz-dejavu-fonts-2.37/share/fonts/truetype/DejaVuSansMono.ttf"
+  -- , configFontIndex = 0
   , configForeground = (0.93, 0.94, 0.96)
   , configBackground = (0.18, 0.2, 0.25)
   }

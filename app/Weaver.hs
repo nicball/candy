@@ -4,6 +4,7 @@
            , DerivingStrategies
            , PatternSynonyms
            , TemplateHaskell
+           , RecordWildCards
            #-}
 
 module Weaver
@@ -73,8 +74,9 @@ withWeaver config action = do
   withProgram vertexShaderSource geometryShaderSource fragmentShaderSource \weaverProgram -> do
     tex <- C.withCAString "atlas" (glGetUniformLocation weaverProgram)
     glUniform1i tex 0
-    withFace (configFontPath config) (configFontSizePx config) \weaverFtLib weaverFtFace -> do
+    withFace (configFontPath config) (configFontIndex config) (configFontSizePx config) \weaverFtLib weaverFtFace -> do
       (cellW, cellH) <- globalBboxSize (configFontSizePx config) weaverFtFace
+      -- printFace weaverFtFace
       withAtlas 100 cellW cellH \weaverAtlas -> do
         texWidth <- C.withCAString "tex_width" (glGetUniformLocation weaverProgram)
         glUniform1f texWidth (fromIntegral (atlasWidth weaverAtlas))
@@ -91,6 +93,23 @@ withWeaver config action = do
             , weaverFtFace
             , weaverRaqm
             }
+  -- where
+  --   printFace face = do
+  --     rcd <- C.peek face
+  --     print $ "num faces " <> show (frNum_faces rcd)
+  --     print . ("family name " <>) . show =<< (C.peekCString . C.castPtr . frFamily_name $ rcd)
+  --     print . ("family name " <>) . show =<< (C.peekCString . C.castPtr . frStyle_name $ rcd)
+  --     let FT_BBox{..} = frBbox rcd
+  --     print $ "xMin " <> show bbXMin
+  --     print $ "xMax " <> show bbXMax
+  --     print $ "yMin " <> show bbYMin
+  --     print $ "yMax " <> show bbYMax
+  --     print $ "units per EM " <> show (frUnits_per_EM rcd)
+  --     print $ "ascender " <> show (frAscender rcd)
+  --     print $ "descender " <> show (frDescender rcd)
+  --     print $ "height " <> show (frHeight rcd)
+  --     print $ "max advance width " <> show (frMax_advance_width rcd)
+  --     print $ "underline position " <> show (frUnderline_position rcd)
 
 setResolution :: Int -> Int -> Weaver -> IO ()
 setResolution w h Weaver{weaverProgram = prog} = do
@@ -141,10 +160,10 @@ drawText weaver originX originY text = do
             Nothing ->
               pure (penX + xAdvance, res)
 
-withFace :: FilePath -> Int -> (FT_Library -> FT_Face -> IO a) -> IO a
-withFace fontPath fontSizePx action = do
+withFace :: FilePath -> Int -> Int -> (FT_Library -> FT_Face -> IO a) -> IO a
+withFace fontPath fontIndex fontSizePx action = do
   ft_With_FreeType \lib -> do
-    ft_With_Face lib fontPath 0 \face -> do
+    ft_With_Face lib fontPath (fromIntegral fontIndex) \face -> do
       ft_Set_Pixel_Sizes face 0 (fromIntegral fontSizePx)
       action lib face
 
