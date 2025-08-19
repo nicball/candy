@@ -11,6 +11,7 @@ module Weaver
   ( Weaver
   , withWeaver
   , setResolution
+  , getLineHeight
   , drawText
   ) where
 
@@ -45,6 +46,8 @@ import FreeType
   , ft_Render_Glyph
   , FT_Bitmap(..)
   , FT_GlyphSlotRec(..)
+  , FT_Size_Metrics(smHeight)
+  , FT_SizeRec(srMetrics)
   )
 import qualified Foreign.Storable as C
 import qualified Foreign.C.String as C
@@ -117,6 +120,10 @@ setResolution w h Weaver{weaverProgram = prog} = do
   glUniform1f horiPPU (fromIntegral w / 2)
   vertPPU <- C.withCAString "vert_ppu" (glGetUniformLocation prog)
   glUniform1f vertPPU (fromIntegral h / 2)
+
+getLineHeight :: Weaver -> IO Int
+getLineHeight Weaver{weaverFtFace = face} = do
+  fromIntegral . (`div` 64) . smHeight . srMetrics <$> (C.peek . frSize =<< C.peek face)
 
 drawText :: Weaver -> Int -> Int -> Text.Text -> IO ()
 drawText weaver originX originY text = do

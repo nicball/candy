@@ -25,7 +25,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 
 import GL (withGLFW, withWindow)
-import Weaver (drawText, setResolution, withWeaver)
+import Weaver (drawText, setResolution, withWeaver, getLineHeight)
 import Config (Config(..))
 
 config :: Config
@@ -57,8 +57,9 @@ main = do
         let (clearColorR, clearColorG, clearColorB) = configBackground config
         glClearColor clearColorR clearColorG clearColorB 1
         glClear GL_COLOR_BUFFER_BIT
+        height <- getLineHeight weaver
         Text.lines <$> Text.readFile "./app/Main.hs" >>= \lns -> forM_ (zip [1 ..] lns) \(idx, ln) ->
-          drawText weaver 30 ((-30) * idx) ln
+          drawText weaver 30 ((- height) * idx) ln
         GLFW.swapBuffers win
         GLFW.waitEvents
         c <- GLFW.windowShouldClose win
