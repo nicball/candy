@@ -3,9 +3,10 @@
            , DeriveAnyClass
            , PatternSynonyms
            , TemplateHaskell
+           , RecursiveDo
            #-}
 
-module Main (main)  where
+module Main (main) where
 
 import qualified Graphics.UI.GLFW as GLFW
 import Graphics.GL
@@ -17,20 +18,26 @@ import Graphics.GL
   , glBlendFunc
   , glClear
   , glClearColor
-  , glViewport
   )
 import Control.Monad (unless, forM_)
 import Data.Function (fix)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 
-import GL (withGLFW, withWindow)
+import GL (withGLFW, withWindow, getSlot, setSlot, viewportSlot, Viewport(..))
 import Weaver (drawText, setResolution, withWeaver, getLineHeight)
 import Config (Config(..))
+import Window
+  ( flush
+  , newDefaultWindowManager
+  , Resolution(Resolution)
+  , TimeWindow(TimeWindow)
+  , WindowManager(registerWindow)
+  )
 
 config :: Config
 config = Config
-  { configFontSizePx = 24
+  { configFontSizePx = 64
   -- , configFontPath = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
   -- , configFontIndex = 17
   -- , configFontPath = "/nix/store/569nxifmwb4r26phghxyn4xszdg7xjxm-source-han-sans-2.004/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
@@ -53,20 +60,24 @@ main = do
       uncurry (onResize weaver win) =<< GLFW.getFramebufferSize win
       GLFW.setFramebufferSizeCallback win (Just (onResize weaver))
 
+      wm <- newDefaultWindowManager
+      rec twid <- registerWindow (TimeWindow twid wm config) wm
+
       fix \loop -> do
         let (clearColorR, clearColorG, clearColorB) = configBackground config
         glClearColor clearColorR clearColorG clearColorB 1
         glClear GL_COLOR_BUFFER_BIT
-        height <- getLineHeight weaver
-        Text.lines <$> Text.readFile "./app/Main.hs" >>= \lns -> forM_ (zip [1 ..] lns) \(idx, ln) ->
-          drawText weaver 30 ((- height) * idx) ln
+        -- height <- getLineHeight weaver
+        -- Text.lines <$> Text.readFile "./app/Main.hs" >>= \lns -> forM_ (zip [1 ..] lns) \(idx, ln) ->
+        --   drawText weaver 30 ((- height) * idx) ln
         -- drawText weaver 30 (- height) "file is filling the office."
         -- drawText weaver 30 (- height) "!==="
+        Viewport 0 0 w h <- getSlot viewportSlot
+        flush (Resolution w h) wm
         GLFW.swapBuffers win
         GLFW.waitEvents
         c <- GLFW.windowShouldClose win
         unless c loop
   where
     onResize weaver _ w h = do
-      glViewport 0 0 (fromIntegral w) (fromIntegral h)
-      setResolution w h weaver
+      setSlot viewportSlot (Viewport 0 0 w h)

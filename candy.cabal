@@ -70,7 +70,8 @@ executable candy
     GL,
     Config,
     Weaver,
-    Raqm
+    Raqm,
+    Window
 
   extra-source-files:
     app/weaver.vert
@@ -85,14 +86,13 @@ executable candy
     base,
     freetype2,
     bytestring,
-    gi-harfbuzz,
     text,
     gl,
     GLFW-b,
     containers,
     lrucache,
     file-embed,
-    text-icu
+    -- text-icu
 
   pkgconfig-depends:
     raqm

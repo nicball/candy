@@ -1,5 +1,6 @@
 {-# LANGUAGE BlockArguments
            , PatternSynonyms
+           , OverloadedStrings
            , LambdaCase
            #-}
 
@@ -32,7 +33,7 @@ import Control.Concurrent.MVar (MVar, newMVar, modifyMVar)
 import Control.Exception (assert, bracket)
 import Data.Maybe (isNothing)
 
-import GL (checkGlError, Texture, GLObject(..), texture2DSlot, withSlot)
+import GL (checkGLError, Texture, GLObject(..), texture2DSlot, withSlot)
 
 data Atlas = Atlas
   { atlasCellWidth :: Int
@@ -52,7 +53,7 @@ newAtlas len w h = do
   withSlot texture2DSlot atlasTexture do
     -- C.withArray (replicate (w * h * numColumns * numRows) (0 :: GLubyte) ) \arr -> do
     glTexImage2D GL_TEXTURE_2D 0 GL_RED (fromIntegral (w * numColumns)) (fromIntegral (h * numRows)) 0 GL_RED GL_UNSIGNED_BYTE C.nullPtr
-    checkGlError
+    checkGLError "glTexImage2D"
   atlasGlyphIdToCell <- newIORef . LRU.newLRU . Just . fromIntegral $ len
   atlasFreeCells <- newMVar [(x, y) | y <- [0 .. numRows - 1], x <- [0 .. numColumns - 1]]
   pure $ Atlas
@@ -89,7 +90,7 @@ addGlyph glyphId w h image atlas = do
           y = cellY * atlasCellHeight atlas
       withSlot texture2DSlot (atlasTexture atlas) do
         glTexSubImage2D GL_TEXTURE_2D 0 (fromIntegral x) (fromIntegral y) (fromIntegral w) (fromIntegral h) GL_RED GL_UNSIGNED_BYTE image
-        checkGlError
+        checkGLError "glTexImage2D"
       pure (x, y, kicked)
 
 getGlyphCoord :: Int -> Atlas -> IO (Maybe (Int, Int))

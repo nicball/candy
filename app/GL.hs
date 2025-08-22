@@ -2,16 +2,17 @@
            , DeriveAnyClass
            , BlockArguments
            , PatternSynonyms
+           , OverloadedStrings
            , FunctionalDependencies
-           , DataKinds
            #-}
 
 module GL
   ( GLException(..)
-  , checkGlError
+  , checkGLError
   , withGLFW
   , withWindow
   , withProgram
+  , bindProgram
   , writeArrayBuffer
   , GLObject(..)
   , withObject
@@ -26,6 +27,13 @@ module GL
   , VertexArray
   , VertexArraySlot
   , vertexArraySlot
+  , Framebuffer
+  , FramebufferSlot
+  , framebufferSlot
+  , Viewport(..)
+  , ViewportSlot
+  , viewportSlot
+  , renderToTexture
   ) where
 
 import Graphics.GL
@@ -44,6 +52,16 @@ import Graphics.GL
   , pattern GL_ARRAY_BUFFER_BINDING
   , pattern GL_STREAM_DRAW
   , pattern GL_VERTEX_ARRAY_BINDING
+  , pattern GL_FRAMEBUFFER
+  , pattern GL_FRAMEBUFFER_BINDING
+  , pattern GL_FRAMEBUFFER_COMPLETE
+  , pattern GL_VIEWPORT
+  , pattern GL_RGB
+  , pattern GL_UNSIGNED_BYTE
+  , pattern GL_TEXTURE_MIN_FILTER
+  , pattern GL_TEXTURE_MAG_FILTER
+  , pattern GL_LINEAR
+  , pattern GL_COLOR_ATTACHMENT0
   , glGetError
   , GLenum
   , GLuint
@@ -72,17 +90,27 @@ import Graphics.GL
   , glGenVertexArrays
   , glDeleteVertexArrays
   , glBindVertexArray
+  , glGenFramebuffers
+  , glDeleteFramebuffers
+  , glBindFramebuffer
+  , glViewport
+  , glTexImage2D
+  , glTexParameteri
+  , glFramebufferTexture2D
+  , glCheckFramebufferStatus
+  , glGenerateMipmap
   )
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Data.List.NonEmpty as NonEmpty
-import Control.Exception (Exception, throwIO, finally)
+import Control.Exception (Exception, throwIO, finally, assert)
 import qualified Foreign.Marshal as C
 import qualified Foreign.Storable as C
 import qualified Foreign.Ptr as C
 import qualified Data.ByteString as BS
-import Control.Monad (when, unless)
+import Control.Monad (when, unless, void)
+import qualified Data.Text as Text
 
-newtype GLException = GLException (NonEmpty.NonEmpty GLenum)
+data GLException = GLException Text.Text (NonEmpty.NonEmpty GLenum)
   deriving Show
   deriving anyclass Exception
 
@@ -90,12 +118,12 @@ newtype GLShaderCompilationError = GLShaderCompilationError BS.ByteString
   deriving Show
   deriving anyclass Exception
 
-checkGlError :: IO ()
-checkGlError = do
+checkGLError :: Text.Text -> IO ()
+checkGLError msg = do
   err <- getAllErrors []
   case err of
     [] -> pure ()
-    e : es -> throwIO (GLException (e NonEmpty.:| es))
+    e : es -> throwIO (GLException msg (e NonEmpty.:| es))
   where
     getAllErrors es = do
       err <- glGetError
@@ -110,7 +138,7 @@ newtype GLFWException = GLFWException String
 withGLFW :: IO a -> IO a
 withGLFW action = do
   GLFW.setErrorCallback $ Just \err str ->
-      throwIO . GLFWException $ show err ++ ": " ++ str
+    throwIO . GLFWException $ show err ++ ": " ++ str
   success <- GLFW.init
   unless success . throwIO . GLFWException $ "Unable to initialize GLFW."
   action `finally` GLFW.terminate
@@ -133,7 +161,7 @@ withWindow width height title action = do
 withShader :: GLenum -> BS.ByteString -> (GLuint -> IO a) -> IO a
 withShader ty src action = do
   shader <- glCreateShader ty
-  when (shader == 0) checkGlError
+  when (shader == 0) (checkGLError "withShader")
   useShader shader `finally` glDeleteShader shader
   where
     useShader shader = do
@@ -149,16 +177,16 @@ withShader ty src action = do
           throwIO . GLShaderCompilationError =<< BS.packCString (C.castPtr errMsg)
       action shader
 
-withProgram :: BS.ByteString -> BS.ByteString -> BS.ByteString -> (GLuint -> IO a) -> IO a
+withProgram :: Maybe BS.ByteString -> Maybe BS.ByteString -> Maybe BS.ByteString -> (GLuint -> IO a) -> IO a
 withProgram vs gs fs action = do
   prog <- glCreateProgram
-  when (prog == 0) checkGlError
+  when (prog == 0) (checkGLError "withProgram")
   useProgram prog `finally` glDeleteProgram prog
   where
     useProgram prog = do
       forCPS [(GL_VERTEX_SHADER, vs), (GL_GEOMETRY_SHADER, gs), (GL_FRAGMENT_SHADER, fs)]
-             (uncurry withShader)
-             (mapM_ (glAttachShader prog))
+             withShader'
+             (mapM_ (attachShader prog))
       glLinkProgram prog
       status <- withPeek (glGetProgramiv prog GL_LINK_STATUS)
       when (status == GL_FALSE) do
@@ -166,9 +194,17 @@ withProgram vs gs fs action = do
         C.withArray (replicate (fromIntegral logLen) 0) \errMsg -> do
           glGetProgramInfoLog prog logLen C.nullPtr errMsg
           throwIO . GLShaderCompilationError =<< BS.packCString (C.castPtr errMsg)
-      old <- fromIntegral <$> withPeek (glGetIntegerv GL_CURRENT_PROGRAM)
-      glUseProgram prog
-      action prog `finally` glUseProgram old
+      action prog
+    withShader' (_, Nothing) cont = cont Nothing
+    withShader' (ty, Just src) cont = withShader ty src (cont . Just)
+    attachShader _ Nothing = pure ()
+    attachShader prog (Just shader) = glAttachShader prog shader
+
+bindProgram :: GLuint -> IO a -> IO a
+bindProgram prog action = do
+  old <- fromIntegral <$> withPeek (glGetIntegerv GL_CURRENT_PROGRAM)
+  glUseProgram prog
+  action `finally` glUseProgram old
 
 writeArrayBuffer :: [GLfloat] -> IO ()
 writeArrayBuffer arr = do
@@ -246,3 +282,47 @@ instance GLSlot VertexArray VertexArraySlot where
   getSlot _ = VertexArray <$> withPeek (glGetIntegerv GL_VERTEX_ARRAY_BINDING . C.castPtr)
   setSlot _ = glBindVertexArray . unVertexArray
 
+newtype Framebuffer = Framebuffer { unFramebuffer :: GLuint }
+
+instance GLObject Framebuffer where
+  genObject = Framebuffer <$> withPeek (glGenFramebuffers 1)
+  deleteObject o = C.with (unFramebuffer o) (glDeleteFramebuffers 1)
+
+data FramebufferSlot = FramebufferSlot
+
+framebufferSlot :: FramebufferSlot
+framebufferSlot = FramebufferSlot
+
+instance GLSlot Framebuffer FramebufferSlot where
+  getSlot _ = Framebuffer <$> withPeek (glGetIntegerv GL_FRAMEBUFFER_BINDING . C.castPtr)
+  setSlot _ = glBindFramebuffer GL_FRAMEBUFFER . unFramebuffer
+
+data Viewport = Viewport { viewportX :: Int, viewportY :: Int, viewportWidth :: Int, viewportHeight :: Int }
+
+data ViewportSlot = ViewportSlot
+
+viewportSlot :: ViewportSlot
+viewportSlot = ViewportSlot
+
+instance GLSlot Viewport ViewportSlot where
+  getSlot _ = do
+    [x, y, w, h] <- C.allocaArray 4 (\p -> glGetIntegerv GL_VIEWPORT p >> fmap fromIntegral <$> C.peekArray 4 p)
+    pure $ Viewport x y w h
+  setSlot _ (Viewport x y w h) = glViewport (fromIntegral x) (fromIntegral y) (fromIntegral w) (fromIntegral h)
+
+renderToTexture :: Int -> Int -> IO a -> IO Texture
+renderToTexture w h action = do
+  texture <- genObject
+  withSlot texture2DSlot texture do
+    glTexImage2D GL_TEXTURE_2D 0 GL_RGB (fromIntegral w) (fromIntegral h) 0 GL_RGB GL_UNSIGNED_BYTE C.nullPtr
+    checkGLError "glTexImage2D"
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_LINEAR
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_LINEAR
+  withObject \fbo -> do
+    withSlot framebufferSlot fbo do
+      glFramebufferTexture2D GL_FRAMEBUFFER GL_COLOR_ATTACHMENT0 GL_TEXTURE_2D (unTexture texture) 0
+      checkGLError "glFramebufferTexture2D"
+      flip assert (pure ()) . (== GL_FRAMEBUFFER_COMPLETE) =<< glCheckFramebufferStatus GL_FRAMEBUFFER
+      withSlot viewportSlot (Viewport 0 0 w h) (void action)
+  withSlot texture2DSlot texture (glGenerateMipmap GL_TEXTURE_2D)
+  pure texture

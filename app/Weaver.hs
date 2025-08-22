@@ -59,7 +59,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.Foreign as Text
 import Data.Word (Word32)
 
-import GL (withProgram, writeArrayBuffer, withSlot, withObject, texture2DSlot, arrayBufferSlot, vertexArraySlot)
+import GL (withProgram, bindProgram, writeArrayBuffer, withSlot, withObject, texture2DSlot, arrayBufferSlot, vertexArraySlot)
 import Atlas (withAtlas, Atlas (..), addGlyph)
 import Config (Config(..))
 import qualified Raqm
@@ -74,7 +74,7 @@ data Weaver = Weaver
 
 withWeaver :: Config -> (Weaver -> IO a) -> IO a
 withWeaver config action = do
-  withProgram vertexShaderSource geometryShaderSource fragmentShaderSource \weaverProgram -> do
+  withProgram (Just vertexShaderSource) (Just geometryShaderSource) (Just fragmentShaderSource) \weaverProgram -> bindProgram weaverProgram do
     tex <- C.withCAString "atlas" (glGetUniformLocation weaverProgram)
     glUniform1i tex 0
     withFace (configFontPath config) (configFontIndex config) (configFontSizePx config) \weaverFtLib weaverFtFace -> do
@@ -127,25 +127,26 @@ getLineHeight Weaver{weaverFtFace = face} = do
 
 drawText :: Weaver -> Int -> Int -> Text.Text -> IO ()
 drawText weaver originX originY text = do
-  withSlot texture2DSlot (atlasTexture (weaverAtlas weaver)) do
-    array <- genVertexArray
-    glGenerateMipmap GL_TEXTURE_2D
-    withObject \vao -> withSlot vertexArraySlot vao do
-      withObject \vbo -> withSlot arrayBufferSlot vbo do
-        writeArrayBuffer array
-        let
-          floatSize :: Num a => a
-          floatSize = fromIntegral (C.sizeOf (0 :: GLfloat))
-          stride = 6 * floatSize
-        glVertexAttribPointer 0 2 GL_FLOAT GL_FALSE stride C.nullPtr
-        glEnableVertexAttribArray 0
-        glVertexAttribPointer 1 1 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (2 * floatSize))
-        glEnableVertexAttribArray 1
-        glVertexAttribPointer 2 1 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (3 * floatSize))
-        glEnableVertexAttribArray 2
-        glVertexAttribPointer 3 2 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (4 * floatSize))
-        glEnableVertexAttribArray 3
-        glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 6))
+  bindProgram (weaverProgram weaver) do
+    withSlot texture2DSlot (atlasTexture (weaverAtlas weaver)) do
+      array <- genVertexArray
+      glGenerateMipmap GL_TEXTURE_2D
+      withObject \vao -> withSlot vertexArraySlot vao do
+        withObject \vbo -> withSlot arrayBufferSlot vbo do
+          writeArrayBuffer array
+          let
+            floatSize :: Num a => a
+            floatSize = fromIntegral (C.sizeOf (0 :: GLfloat))
+            stride = 6 * floatSize
+          glVertexAttribPointer 0 2 GL_FLOAT GL_FALSE stride C.nullPtr
+          glEnableVertexAttribArray 0
+          glVertexAttribPointer 1 1 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (2 * floatSize))
+          glEnableVertexAttribArray 1
+          glVertexAttribPointer 2 1 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (3 * floatSize))
+          glEnableVertexAttribArray 2
+          glVertexAttribPointer 3 2 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (4 * floatSize))
+          glEnableVertexAttribArray 3
+          glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 6))
   where
     genVertexArray = do
       glyphs <- shapeText weaver text
