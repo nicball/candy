@@ -2,6 +2,8 @@
            , DeriveAnyClass
            , BlockArguments
            , PatternSynonyms
+           , FunctionalDependencies
+           , DataKinds
            #-}
 
 module GL
@@ -9,13 +11,21 @@ module GL
   , checkGlError
   , withGLFW
   , withWindow
-  , withTexture2D
   , withProgram
-  , withArrayBuffer
-  , bindArrayBuffer
   , writeArrayBuffer
-  , withVAO
-  , bindVAO
+  , GLObject(..)
+  , withObject
+  , GLSlot(..)
+  , withSlot
+  , Texture
+  , TextureSlot
+  , texture2DSlot
+  , Buffer
+  , BufferSlot
+  , arrayBufferSlot
+  , VertexArray
+  , VertexArraySlot
+  , vertexArraySlot
   ) where
 
 import Graphics.GL
@@ -33,11 +43,14 @@ import Graphics.GL
   , pattern GL_ARRAY_BUFFER
   , pattern GL_ARRAY_BUFFER_BINDING
   , pattern GL_STREAM_DRAW
+  , pattern GL_VERTEX_ARRAY_BINDING
   , glGetError
   , GLenum
   , GLuint
   , GLfloat
   , glGetIntegerv
+  , glGenTextures
+  , glDeleteTextures
   , glBindTexture
   , glCreateShader
   , glDeleteShader
@@ -63,8 +76,7 @@ import Graphics.GL
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Data.List.NonEmpty as NonEmpty
 import Control.Exception (Exception, throwIO, finally)
-import qualified Foreign.Marshal.Utils as C
-import qualified Foreign.Marshal.Array as C
+import qualified Foreign.Marshal as C
 import qualified Foreign.Storable as C
 import qualified Foreign.Ptr as C
 import qualified Data.ByteString as BS
@@ -118,12 +130,6 @@ withWindow width height title action = do
       GLFW.makeContextCurrent (Just win)
       action win
 
-withTexture2D :: GLuint -> IO a -> IO a
-withTexture2D tex action = do
-  old <- fromIntegral <$> withPeek 0 (glGetIntegerv GL_TEXTURE_BINDING_2D)
-  glBindTexture GL_TEXTURE_2D tex
-  action `finally` glBindTexture GL_TEXTURE_2D old
-
 withShader :: GLenum -> BS.ByteString -> (GLuint -> IO a) -> IO a
 withShader ty src action = do
   shader <- glCreateShader ty
@@ -135,9 +141,9 @@ withShader ty src action = do
         C.with pstr \ppstr ->
           glShaderSource shader 1 ppstr C.nullPtr
       glCompileShader shader
-      status <- withPeek 0 (glGetShaderiv shader GL_COMPILE_STATUS)
+      status <- withPeek (glGetShaderiv shader GL_COMPILE_STATUS)
       when (status == GL_FALSE) do
-        logLen <- withPeek 0 (glGetShaderiv shader GL_INFO_LOG_LENGTH)
+        logLen <- withPeek (glGetShaderiv shader GL_INFO_LOG_LENGTH)
         C.withArray (replicate (fromIntegral logLen) 0) \errMsg -> do
           glGetShaderInfoLog shader logLen C.nullPtr errMsg
           throwIO . GLShaderCompilationError =<< BS.packCString (C.castPtr errMsg)
@@ -154,45 +160,89 @@ withProgram vs gs fs action = do
              (uncurry withShader)
              (mapM_ (glAttachShader prog))
       glLinkProgram prog
-      status <- withPeek 0 (glGetProgramiv prog GL_LINK_STATUS)
+      status <- withPeek (glGetProgramiv prog GL_LINK_STATUS)
       when (status == GL_FALSE) do
-        logLen <- withPeek 0 (glGetProgramiv prog GL_INFO_LOG_LENGTH)
+        logLen <- withPeek (glGetProgramiv prog GL_INFO_LOG_LENGTH)
         C.withArray (replicate (fromIntegral logLen) 0) \errMsg -> do
           glGetProgramInfoLog prog logLen C.nullPtr errMsg
           throwIO . GLShaderCompilationError =<< BS.packCString (C.castPtr errMsg)
-      old <- fromIntegral <$> withPeek 0 (glGetIntegerv GL_CURRENT_PROGRAM)
+      old <- fromIntegral <$> withPeek (glGetIntegerv GL_CURRENT_PROGRAM)
       glUseProgram prog
       action prog `finally` glUseProgram old
-
-withArrayBuffer :: (GLuint -> IO a) -> IO a
-withArrayBuffer action = do
-  buf <- withPeek 0 (glGenBuffers 1)
-  action buf `finally` C.with buf (glDeleteBuffers 1)
-
-bindArrayBuffer :: GLuint -> IO a -> IO a
-bindArrayBuffer buf action = do
-  old <- withPeek 0 (glGetIntegerv GL_ARRAY_BUFFER_BINDING . C.castPtr)
-  glBindBuffer GL_ARRAY_BUFFER buf
-  action `finally` glBindBuffer GL_ARRAY_BUFFER old
 
 writeArrayBuffer :: [GLfloat] -> IO ()
 writeArrayBuffer arr = do
   C.withArrayLen arr \size p -> do
     glBufferData GL_ARRAY_BUFFER (fromIntegral size * fromIntegral (C.sizeOf (0 :: GLfloat))) (C.castPtr p) GL_STREAM_DRAW
 
-withVAO :: (GLuint -> IO a) -> IO a
-withVAO action = do
-  vao <- withPeek 0 (glGenVertexArrays 1)
-  action vao `finally` C.with vao (glDeleteVertexArrays 1)
-
-bindVAO :: GLuint -> IO a -> IO a
-bindVAO vao action = do
-  glBindVertexArray vao
-  action `finally` glBindVertexArray 0
-
 forCPS :: [a] -> (a -> (b -> r) -> r) -> ([b] -> r) -> r
 forCPS [] _ k = k []
 forCPS (x : xs) f k = f x \y -> forCPS xs f \ys -> k (y : ys)
 
-withPeek :: C.Storable a => a -> (C.Ptr a -> IO ()) -> IO a
-withPeek val action = C.with val \p -> action p >> C.peek p
+withPeek :: C.Storable a =>(C.Ptr a -> IO b) -> IO a
+withPeek action = C.alloca \p -> action p >> C.peek p
+
+class GLObject a where
+  genObject :: IO a
+  deleteObject :: a -> IO ()
+
+withObject :: GLObject a => (a -> IO b) -> IO b
+withObject action = do
+  obj <- genObject
+  action obj `finally` deleteObject obj
+
+class GLSlot a s | s -> a where
+  getSlot :: s -> IO a
+  setSlot :: s -> a -> IO ()
+
+withSlot :: GLSlot a s => s -> a -> IO b -> IO b
+withSlot s a action = do
+  old <- getSlot s
+  setSlot s a
+  action `finally` setSlot s old
+
+newtype Texture = Texture { unTexture :: GLuint }
+
+instance GLObject Texture where
+  genObject = Texture <$> withPeek (glGenTextures 1)
+  deleteObject o = C.with (unTexture o) (glDeleteTextures 1)
+
+data TextureSlot = TextureSlot { tsTarget :: GLenum, tsParameter :: GLenum }
+
+texture2DSlot :: TextureSlot
+texture2DSlot = TextureSlot GL_TEXTURE_2D GL_TEXTURE_BINDING_2D
+
+instance GLSlot Texture TextureSlot where
+  getSlot s = Texture <$> withPeek (glGetIntegerv (tsParameter s) . C.castPtr)
+  setSlot s a = glBindTexture (tsTarget s) (unTexture a)
+
+newtype Buffer = Buffer { unBuffer :: GLuint }
+
+instance GLObject Buffer where
+  genObject = Buffer <$> withPeek (glGenBuffers 1)
+  deleteObject o = C.with (unBuffer o) (glDeleteBuffers 1)
+
+data BufferSlot = BufferSlot { bsTarget :: GLenum, bsParameter :: GLenum }
+
+arrayBufferSlot :: BufferSlot
+arrayBufferSlot = BufferSlot GL_ARRAY_BUFFER GL_ARRAY_BUFFER_BINDING
+
+instance GLSlot Buffer BufferSlot where
+  getSlot s = Buffer <$> withPeek (glGetIntegerv (bsParameter s) . C.castPtr)
+  setSlot s a = glBindBuffer (bsTarget s) (unBuffer a)
+
+newtype VertexArray = VertexArray { unVertexArray :: GLuint }
+
+instance GLObject VertexArray where
+  genObject = VertexArray <$> withPeek (glGenVertexArrays 1)
+  deleteObject o = C.with (unVertexArray o) (glDeleteVertexArrays 1)
+
+data VertexArraySlot = VertexArraySlot
+
+vertexArraySlot :: VertexArraySlot
+vertexArraySlot = VertexArraySlot
+
+instance GLSlot VertexArray VertexArraySlot where
+  getSlot _ = VertexArray <$> withPeek (glGetIntegerv GL_VERTEX_ARRAY_BINDING . C.castPtr)
+  setSlot _ = glBindVertexArray . unVertexArray
+
