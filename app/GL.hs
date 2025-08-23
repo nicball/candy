@@ -34,6 +34,8 @@ module GL
   , ViewportSlot
   , viewportSlot
   , renderToTexture
+  , Resolution(..)
+  , screenCoordToGL
   ) where
 
 import Graphics.GL
@@ -60,7 +62,8 @@ import Graphics.GL
   , pattern GL_UNSIGNED_BYTE
   , pattern GL_TEXTURE_MIN_FILTER
   , pattern GL_TEXTURE_MAG_FILTER
-  , pattern GL_LINEAR
+  , pattern GL_NEAREST_MIPMAP_NEAREST
+  , pattern GL_NEAREST
   , pattern GL_COLOR_ATTACHMENT0
   , glGetError
   , GLenum
@@ -310,14 +313,14 @@ instance GLSlot Viewport ViewportSlot where
     pure $ Viewport x y w h
   setSlot _ (Viewport x y w h) = glViewport (fromIntegral x) (fromIntegral y) (fromIntegral w) (fromIntegral h)
 
-renderToTexture :: Int -> Int -> IO a -> IO Texture
-renderToTexture w h action = do
+renderToTexture :: Resolution -> IO a -> IO Texture
+renderToTexture (Resolution w h) action = do
   texture <- genObject
   withSlot texture2DSlot texture do
     glTexImage2D GL_TEXTURE_2D 0 GL_RGB (fromIntegral w) (fromIntegral h) 0 GL_RGB GL_UNSIGNED_BYTE C.nullPtr
     checkGLError "glTexImage2D"
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_LINEAR
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_LINEAR
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST_MIPMAP_NEAREST
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
   withObject \fbo -> do
     withSlot framebufferSlot fbo do
       glFramebufferTexture2D GL_FRAMEBUFFER GL_COLOR_ATTACHMENT0 GL_TEXTURE_2D (unTexture texture) 0
@@ -326,3 +329,11 @@ renderToTexture w h action = do
       withSlot viewportSlot (Viewport 0 0 w h) (void action)
   withSlot texture2DSlot texture (glGenerateMipmap GL_TEXTURE_2D)
   pure texture
+
+data Resolution = Resolution { resHori :: Int, resVert :: Int }
+
+screenCoordToGL :: Resolution -> Int -> Int -> (GLfloat, GLfloat)
+screenCoordToGL (Resolution w h) x y =
+  ( -1 + ( (fromIntegral x) * 2 + 1) / fromIntegral w
+  ,  1 + (-(fromIntegral y) * 2 - 1) / fromIntegral h
+  )

@@ -10,7 +10,6 @@
 module Weaver
   ( Weaver
   , withWeaver
-  , setResolution
   , getLineHeight
   , drawText
   ) where
@@ -54,12 +53,12 @@ import qualified Foreign.C.String as C
 import qualified Foreign.Ptr as C
 import qualified Foreign.Marshal.Array as C
 import qualified Data.ByteString as BS
-import Control.Monad (forM, forM_, foldM, (<=<))
+import Control.Monad (forM, foldM)
 import qualified Data.Text as Text
 import qualified Data.Text.Foreign as Text
 import Data.Word (Word32)
 
-import GL (withProgram, bindProgram, writeArrayBuffer, withSlot, withObject, texture2DSlot, arrayBufferSlot, vertexArraySlot)
+import GL (withProgram, bindProgram, writeArrayBuffer, withSlot, withObject, texture2DSlot, arrayBufferSlot, vertexArraySlot, Resolution(..))
 import Atlas (withAtlas, Atlas (..), addGlyph)
 import Config (Config(..))
 import qualified Raqm
@@ -114,20 +113,21 @@ withWeaver config action = do
   --     print $ "max advance width " <> show (frMax_advance_width rcd)
   --     print $ "underline position " <> show (frUnderline_position rcd)
 
-setResolution :: Int -> Int -> Weaver -> IO ()
-setResolution w h Weaver{weaverProgram = prog} = do
-  horiPPU <- C.withCAString "hori_ppu" (glGetUniformLocation prog)
-  glUniform1f horiPPU (fromIntegral w / 2)
-  vertPPU <- C.withCAString "vert_ppu" (glGetUniformLocation prog)
-  glUniform1f vertPPU (fromIntegral h / 2)
+setResolution :: Resolution -> Weaver -> IO ()
+setResolution (Resolution w h) Weaver{weaverProgram = prog} = do
+  horiRes <- C.withCAString "hori_res" (glGetUniformLocation prog)
+  glUniform1f horiRes (fromIntegral w)
+  vertRes <- C.withCAString "vert_res" (glGetUniformLocation prog)
+  glUniform1f vertRes (fromIntegral h)
 
 getLineHeight :: Weaver -> IO Int
 getLineHeight Weaver{weaverFtFace = face} = do
   fromIntegral . (`div` 64) . smHeight . srMetrics <$> (C.peek . frSize =<< C.peek face)
 
-drawText :: Weaver -> Int -> Int -> Text.Text -> IO ()
-drawText weaver originX originY text = do
+drawText :: Weaver -> Resolution -> Int -> Int -> Text.Text -> IO ()
+drawText weaver res originX originY text = do
   bindProgram (weaverProgram weaver) do
+    setResolution res weaver
     withSlot texture2DSlot (atlasTexture (weaverAtlas weaver)) do
       array <- genVertexArray
       glGenerateMipmap GL_TEXTURE_2D
@@ -156,7 +156,7 @@ drawText weaver originX originY text = do
       renderedGlyphs <- renderGlyphToAtlas weaver (Raqm.gIndex <$> glyphs)
       concat . reverse . snd <$> foldM renderGlyph (0, []) (zip glyphs renderedGlyphs)
       where
-        renderGlyph (penX, res) (glyph, mRenderedGlyph) = do
+        renderGlyph (penX, result) (glyph, mRenderedGlyph) = do
           let xOffset = fromIntegral . (`div` 64) . Raqm.gXOffset $ glyph
           let yOffset = fromIntegral . (`div` 64) . Raqm.gYOffset $ glyph
           let xAdvance = fromIntegral . (`div` 64) . Raqm.gXAdvance $ glyph
@@ -166,9 +166,9 @@ drawText weaver originX originY text = do
                   topBearing = fromIntegral (gTopBearing rg)
                   x = penX + leftBearing + xOffset + fromIntegral originX
                   y = topBearing - fromIntegral (gHeight rg) + yOffset + fromIntegral originY
-              in pure (penX + xAdvance, [x, y, fromIntegral (gWidth rg), fromIntegral (gHeight rg), fromIntegral (gAtlasX rg), fromIntegral (gAtlasY rg)] : res)
+              in pure (penX + xAdvance, [x, y, fromIntegral (gWidth rg), fromIntegral (gHeight rg), fromIntegral (gAtlasX rg), fromIntegral (gAtlasY rg)] : result)
             Nothing ->
-              pure (penX + xAdvance, res)
+              pure (penX + xAdvance, result)
 
 withFace :: FilePath -> Int -> Int -> (FT_Library -> FT_Face -> IO a) -> IO a
 withFace fontPath fontIndex fontSizePx action = do

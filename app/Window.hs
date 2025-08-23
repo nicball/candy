@@ -1,8 +1,7 @@
 {-# LANGUAGE LambdaCase, OverloadedStrings, PatternSynonyms #-}
 
 module Window
-  ( Resolution(..)
-  , Window(..)
+  ( Window(..)
   , WindowID
   , WindowManager(..)
   , DefaultWindowManager
@@ -16,7 +15,6 @@ module Window
 import GL
   ( arrayBufferSlot
   , bindProgram
-  , checkGLError
   , renderToTexture
   , texture2DSlot
   , vertexArraySlot
@@ -26,22 +24,22 @@ import GL
   , writeArrayBuffer
   , GLObject(deleteObject)
   , Texture
+  , Resolution(..)
+  , screenCoordToGL
   )
 import qualified Data.IntMap as IntMap
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef)
-import Weaver (drawText, setResolution, withWeaver)
-import Config (Config)
+import Weaver (drawText, withWeaver)
+import Config (Config(..))
 import Graphics.GL
   ( pattern GL_COLOR_BUFFER_BIT
   , pattern GL_FALSE
   , pattern GL_FLOAT
-  , pattern GL_TEXTURE_2D
   , pattern GL_TRIANGLE_STRIP
   , glClear
   , glClearColor
   , glDrawArrays
   , glEnableVertexAttribArray
-  , glGenerateMipmap
   , glGetUniformLocation
   , glUniform1i
   , glVertexAttribPointer
@@ -49,11 +47,10 @@ import Graphics.GL
 import Foreign.Ptr (nullPtr, plusPtr)
 import Foreign.C (withCAString)
 import qualified Data.ByteString.Char8 as BS
-
-data Resolution = Resolution { resHori :: Int, resVert :: Int }
+import Control.Monad (forM_)
 
 class Window a where
-  drawWindow :: Resolution -> a -> IO Texture
+  drawWindow :: Resolution -> a -> IO ()
 
 newtype WindowID = WindowID Int
 
@@ -82,19 +79,25 @@ instance WindowManager DefaultWindowManager where
     modifyIORef (dwmWindows wm) (IntMap.alter (\case { Just wi -> Just wi { wiNeedRedraw = True }; Nothing -> Nothing; }) wid)
 
 flush :: Resolution -> DefaultWindowManager -> IO ()
-flush (Resolution w h) dwm = do
+flush res@(Resolution w h) dwm = do
   [(0, onlyWin)] <- IntMap.assocs <$> readIORef (dwmWindows dwm)
+  let texRes = Resolution (w - 99 * 2) (h - 99 * 2)
   tex <- case onlyWin of
-    WindowInfo win _ -> drawWindow (Resolution w h) win
+    WindowInfo win _ -> renderToTexture texRes (drawWindow texRes win)
   withProgram dtVs Nothing dtFs $ \prog -> bindProgram prog $ do
     withSlot texture2DSlot tex $ do
       withObject $ \vao -> withSlot vertexArraySlot vao $ do
         withObject $ \vbo -> withSlot arrayBufferSlot vbo $ do
+          let
+            (topLeftX    , topLeftY    ) = screenCoordToGL res 100           100
+            (topRightX   , topRightY   ) = screenCoordToGL res (w - 1 - 100) 100
+            (bottomLeftX , bottomLeftY ) = screenCoordToGL res 100           (h - 1 - 100)
+            (bottomRightX, bottomRightY) = screenCoordToGL res (w - 1 - 100) (h - 1 - 100)
           writeArrayBuffer
-            [ -0.9,  0.9, 0, 1
-            ,  0.9,  0.9, 1, 1
-            , -0.9, -0.9, 0, 0
-            ,  0.9, -0.9, 1, 0
+            [ topLeftX    , topLeftY    , 0, 1
+            , topRightX   , topRightY   , 1, 1
+            , bottomLeftX , bottomLeftY , 0, 0
+            , bottomRightX, bottomRightY, 1, 0
             ]
           glVertexAttribPointer 0 2 GL_FLOAT GL_FALSE 16 nullPtr
           glEnableVertexAttribArray 0
@@ -129,10 +132,8 @@ flush (Resolution w h) dwm = do
 data TimeWindow = forall w. WindowManager w => TimeWindow WindowID w Config
 
 instance Window TimeWindow where
-  drawWindow (Resolution w h) (TimeWindow wid wm cfg) = do
-    renderToTexture w h $ do
-      glClearColor 0.7 0.2 0.2 1
-      glClear GL_COLOR_BUFFER_BIT
-      withWeaver cfg $ \weaver -> do
-        setResolution w h weaver
-        drawText weaver (w `div` 2) (-h `div` 2) "Hahaha"
+  drawWindow res@(Resolution w h) (TimeWindow wid wm cfg) = do
+    glClearColor 0.7 0.2 0.2 1
+    glClear GL_COLOR_BUFFER_BIT
+    forM_ [16, 32, 64, 128] $ \s ->
+      withWeaver cfg { configFontSizePx = s } $ \weaver -> drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s) "haha"

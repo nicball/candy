@@ -7,16 +7,16 @@ in vec2 g_tex_coord[];
 in float g_width[];
 in float g_height[];
 
-uniform float hori_ppu;
-uniform float vert_ppu;
+uniform float hori_res;
+uniform float vert_res;
 uniform float tex_width;
 uniform float tex_height;
 
 out vec2 f_tex_coord;
 
 void main() {
-  float vw = g_width[0] / hori_ppu;
-  float vh = g_height[0] / vert_ppu;
+  float vw = g_width[0] * 2 / hori_res;
+  float vh = g_height[0] * 2 / vert_res;
   float tw = g_width[0] / tex_width;
   float th = g_height[0] / tex_height;
   vec4 pos = gl_in[0].gl_Position;
