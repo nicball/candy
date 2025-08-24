@@ -62,8 +62,8 @@ import Graphics.GL
   , pattern GL_UNSIGNED_BYTE
   , pattern GL_TEXTURE_MIN_FILTER
   , pattern GL_TEXTURE_MAG_FILTER
-  , pattern GL_NEAREST_MIPMAP_NEAREST
-  , pattern GL_NEAREST
+  , pattern GL_LINEAR_MIPMAP_NEAREST
+  , pattern GL_LINEAR
   , pattern GL_COLOR_ATTACHMENT0
   , glGetError
   , GLenum
@@ -319,8 +319,8 @@ renderToTexture (Resolution w h) action = do
   withSlot texture2DSlot texture do
     glTexImage2D GL_TEXTURE_2D 0 GL_RGB (fromIntegral w) (fromIntegral h) 0 GL_RGB GL_UNSIGNED_BYTE C.nullPtr
     checkGLError "glTexImage2D"
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST_MIPMAP_NEAREST
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_LINEAR_MIPMAP_NEAREST
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_LINEAR
   withObject \fbo -> do
     withSlot framebufferSlot fbo do
       glFramebufferTexture2D GL_FRAMEBUFFER GL_COLOR_ATTACHMENT0 GL_TEXTURE_2D (unTexture texture) 0

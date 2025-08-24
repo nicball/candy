@@ -40,7 +40,6 @@ import FreeType
   , ft_Set_Pixel_Sizes
   , FT_FaceRec(..)
   , FT_BBox(..)
-  , FT_Int
   , ft_Load_Glyph
   , ft_Render_Glyph
   , FT_Bitmap(..)
@@ -56,7 +55,6 @@ import qualified Data.ByteString as BS
 import Control.Monad (forM, foldM)
 import qualified Data.Text as Text
 import qualified Data.Text.Foreign as Text
-import Data.Word (Word32)
 
 import GL (withProgram, bindProgram, writeArrayBuffer, withSlot, withObject, texture2DSlot, arrayBufferSlot, vertexArraySlot, Resolution(..))
 import Atlas (withAtlas, Atlas (..), addGlyph)
@@ -129,7 +127,7 @@ drawText weaver res originX originY text = do
   bindProgram (weaverProgram weaver) do
     setResolution res weaver
     withSlot texture2DSlot (atlasTexture (weaverAtlas weaver)) do
-      array <- genVertexArray
+      array <- fmap fromIntegral <$> genVertexArray
       glGenerateMipmap GL_TEXTURE_2D
       withObject \vao -> withSlot vertexArraySlot vao do
         withObject \vbo -> withSlot arrayBufferSlot vbo do
@@ -161,12 +159,10 @@ drawText weaver res originX originY text = do
           let yOffset = fromIntegral . (`div` 64) . Raqm.gYOffset $ glyph
           let xAdvance = fromIntegral . (`div` 64) . Raqm.gXAdvance $ glyph
           case mRenderedGlyph of
-            Just rg->
-              let leftBearing = fromIntegral (gLeftBearing rg)
-                  topBearing = fromIntegral (gTopBearing rg)
-                  x = penX + leftBearing + xOffset + fromIntegral originX
-                  y = topBearing - fromIntegral (gHeight rg) + yOffset + fromIntegral originY
-              in pure (penX + xAdvance, [x, y, fromIntegral (gWidth rg), fromIntegral (gHeight rg), fromIntegral (gAtlasX rg), fromIntegral (gAtlasY rg)] : result)
+            Just RenderedGlyph { .. } ->
+              let x = penX + gLeftBearing + xOffset + originX
+                  y = -gTopBearing + gHeight - yOffset + originY
+              in pure (penX + xAdvance, [x, y, gWidth, gHeight, gAtlasX, gAtlasY] : result)
             Nothing ->
               pure (penX + xAdvance, result)
 
@@ -199,32 +195,39 @@ fragmentShaderSource = $(embedFileRelative "./app/weaver.frag")
 data RenderedGlyph = RenderedGlyph
   { gAtlasX :: Int
   , gAtlasY :: Int
-  , gWidth :: Word32
-  , gHeight :: Word32
-  , gLeftBearing :: FT_Int
-  , gTopBearing :: FT_Int
+  , gWidth :: Int
+  , gHeight :: Int
+  , gLeftBearing :: Int
+  , gTopBearing :: Int
   }
 
-renderGlyphToAtlas :: Integral a => Weaver -> [a] -> IO [Maybe RenderedGlyph]
+renderGlyphToAtlas :: Weaver -> [Int] -> IO [Maybe RenderedGlyph]
 renderGlyphToAtlas weaver glyphIds =
   forM glyphIds \glyphId -> do
     ft_Load_Glyph (weaverFtFace weaver) (fromIntegral glyphId) 0
     glyphSlot <- frGlyph <$> C.peek (weaverFtFace weaver)
     ft_Render_Glyph glyphSlot FT_RENDER_MODE_NORMAL
     bitmap <- gsrBitmap <$> C.peek glyphSlot
-    leftBearing <- gsrBitmap_left <$> C.peek glyphSlot
-    topBearing <- gsrBitmap_top <$> C.peek glyphSlot
+    leftBearing <- fromIntegral . gsrBitmap_left <$> C.peek glyphSlot
+    topBearing <- fromIntegral . gsrBitmap_top <$> C.peek glyphSlot
     let
-      width = bPitch bitmap
-      height = bRows bitmap
-      eWidth = bWidth bitmap
+      width = fromIntegral . bPitch $ bitmap
+      height = fromIntegral . bRows $ bitmap
+      eWidth = fromIntegral . bWidth $ bitmap
     if width == 0 || height == 0
       then pure Nothing
       else do
         (x, y, _) <- do
-          withReversed (fromIntegral width * fromIntegral height) (fromIntegral width) (fromIntegral eWidth) (bBuffer bitmap) \buf ->
-            addGlyph (fromIntegral glyphId) (fromIntegral eWidth) (fromIntegral height) (C.castPtr buf) (weaverAtlas weaver)
-        pure (Just (RenderedGlyph x y eWidth height leftBearing topBearing))
+          withReversed (width * height) width eWidth (bBuffer bitmap) \buf ->
+            addGlyph glyphId eWidth height (C.castPtr buf) (weaverAtlas weaver)
+        pure . Just $ RenderedGlyph
+          { gAtlasX = x
+          , gAtlasY = y
+          , gWidth = eWidth
+          , gHeight = height
+          , gLeftBearing = leftBearing
+          , gTopBearing = topBearing
+          }
     where
       withReversed len ncol necol arr action = flip C.withArray action . concat . groupNRev ncol necol [] =<< C.peekArray len arr
       groupNRev _ _ acc [] = acc

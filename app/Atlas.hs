@@ -25,7 +25,7 @@ import Graphics.GL
     , pattern GL_TEXTURE_MIN_FILTER
     , pattern GL_TEXTURE_MAG_FILTER
     , pattern GL_LINEAR_MIPMAP_NEAREST
-    , pattern GL_NEAREST
+    , pattern GL_LINEAR
     , glTexImage2D
     , glTexParameteri
     , glTexSubImage2D
@@ -59,7 +59,7 @@ newAtlas len w h = do
     -- C.withArray (replicate (w * h * numColumns * numRows) (0 :: GLubyte) ) \arr -> do
     glTexImage2D GL_TEXTURE_2D 0 GL_RED (fromIntegral (w * numColumns)) (fromIntegral (h * numRows)) 0 GL_RED GL_UNSIGNED_BYTE C.nullPtr
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_LINEAR_MIPMAP_NEAREST
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_LINEAR
   atlasGlyphIdToCell <- newIORef . LRU.newLRU . Just . fromIntegral $ len
   atlasFreeCells <- newMVar [(x, y) | y <- [0 .. numRows - 1], x <- [0 .. numColumns - 1]]
   pure $ Atlas

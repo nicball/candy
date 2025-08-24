@@ -135,5 +135,8 @@ instance Window TimeWindow where
   drawWindow res@(Resolution w h) (TimeWindow wid wm cfg) = do
     glClearColor 0.7 0.2 0.2 1
     glClear GL_COLOR_BUFFER_BIT
-    forM_ [16, 32, 64, 128] $ \s ->
-      withWeaver cfg { configFontSizePx = s } $ \weaver -> drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s) "haha"
+    forM_ [16, 32, 64, 128] $ \s -> do
+      withWeaver cfg { configFontSizePx = s, configForeground = (0, 0, 0) } $ \weaver -> do
+        drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s - 1) "haha"
+      withWeaver cfg { configFontSizePx = s } $ \weaver -> do
+        drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s) "haha"
