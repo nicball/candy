@@ -20,7 +20,7 @@ void main() {
   float tw = g_width[0] / tex_width;
   float th = g_height[0] / tex_height;
   vec4 pos = gl_in[0].gl_Position;
-  vec2 tpos = vec2(g_tex_coord[0].x / tex_width, g_tex_coord[0].y / tex_height);
+  vec2 tpos = vec2((g_tex_coord[0].x + 0.5) / tex_width, (g_tex_coord[0].y + 0.5) / tex_height);
 
   gl_Position = pos;
   f_tex_coord = tpos;

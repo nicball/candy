@@ -126,7 +126,7 @@ flush res@(Resolution w h) dwm = do
       , "uniform sampler2D tex;"
       , "out vec4 color;"
       , "void main() {"
-      , "  color = vec4(texture(tex, f_tex_coord).rgb, 1);"
+      , "  color = texture(tex, f_tex_coord);"
       , "}"
       ]
 
