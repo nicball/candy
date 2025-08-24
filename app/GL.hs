@@ -65,6 +65,10 @@ import Graphics.GL
   , pattern GL_LINEAR_MIPMAP_NEAREST
   , pattern GL_LINEAR
   , pattern GL_COLOR_ATTACHMENT0
+  , pattern GL_TEXTURE_WRAP_S
+  , pattern GL_TEXTURE_WRAP_T
+  , pattern GL_CLAMP_TO_BORDER
+  , pattern GL_TEXTURE_BORDER_COLOR
   , glGetError
   , GLenum
   , GLuint
@@ -99,6 +103,7 @@ import Graphics.GL
   , glViewport
   , glTexImage2D
   , glTexParameteri
+  , glTexParameterfv
   , glFramebufferTexture2D
   , glCheckFramebufferStatus
   , glGenerateMipmap
@@ -321,6 +326,8 @@ renderToTexture (Resolution w h) action = do
     checkGLError "glTexImage2D"
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_LINEAR_MIPMAP_NEAREST
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_LINEAR
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_S GL_CLAMP_TO_BORDER
+    C.withArray [0, 0, 0, 0] (glTexParameterfv GL_TEXTURE_2D GL_TEXTURE_BORDER_COLOR)
   withObject \fbo -> do
     withSlot framebufferSlot fbo do
       glFramebufferTexture2D GL_FRAMEBUFFER GL_COLOR_ATTACHMENT0 GL_TEXTURE_2D (unTexture texture) 0

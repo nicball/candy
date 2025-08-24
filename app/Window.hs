@@ -23,7 +23,6 @@ import GL
   , withSlot
   , writeArrayBuffer
   , GLObject(deleteObject)
-  , Texture
   , Resolution(..)
   , screenCoordToGL
   )
@@ -48,6 +47,9 @@ import Foreign.Ptr (nullPtr, plusPtr)
 import Foreign.C (withCAString)
 import qualified Data.ByteString.Char8 as BS
 import Control.Monad (forM_)
+import qualified Data.Text as Text
+import qualified Data.Text.IO as Text
+import Weaver (drawText, withWeaver, getLineHeight, getDescender)
 
 class Window a where
   drawWindow :: Resolution -> a -> IO ()
@@ -133,10 +135,18 @@ data TimeWindow = forall w. WindowManager w => TimeWindow WindowID w Config
 
 instance Window TimeWindow where
   drawWindow res@(Resolution w h) (TimeWindow wid wm cfg) = do
-    glClearColor 0.7 0.2 0.2 1
+    glClearColor 0.2 0.2 0.2 1
     glClear GL_COLOR_BUFFER_BIT
-    forM_ [16, 32, 64, 128] $ \s -> do
-      withWeaver cfg { configFontSizePx = s, configForeground = (0, 0, 0) } $ \weaver -> do
-        drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s - 1) "haha"
-      withWeaver cfg { configFontSizePx = s } $ \weaver -> do
-        drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s) "haha"
+    -- forM_ [16, 32, 64, 128] $ \s -> do
+    --   withWeaver cfg { configFontSizePx = s, configForeground = (0, 0, 0) } $ \weaver -> do
+    --     drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s - 1) "haha"
+    --   withWeaver cfg { configFontSizePx = s } $ \weaver -> do
+    --     drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s) "haha"
+    withWeaver cfg $ \weaver -> do
+      height <- getLineHeight weaver
+      descender <- getDescender weaver
+      Text.lines <$> Text.readFile "./app/Weaver.hs" >>= \lns -> forM_ (zip [1 ..] lns) $ \(idx, ln) -> do
+        drawText weaver res 5 (height * idx + descender) (Text.pack (show idx))
+        drawText weaver res 50 (height * idx + descender) ln
+      -- drawText weaver 30 height "file is filling the office."
+      -- drawText weaver res 30 height "OPPO回应苹果起诉员工窃密：并未侵犯苹果公司商业秘密，相信公正的司法审理能够澄清事实。"

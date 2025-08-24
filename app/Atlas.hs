@@ -32,7 +32,7 @@ import Graphics.GL
     , glPixelStorei
     )
 import qualified Data.Cache.LRU as LRU
-import qualified Foreign.Ptr as C
+import qualified Foreign as C
 import Data.IORef (IORef, newIORef, atomicModifyIORef')
 import Control.Concurrent.MVar (MVar, newMVar, modifyMVar)
 import Control.Exception (assert, bracket)
@@ -56,8 +56,8 @@ newAtlas len w h = do
   let numColumns = truncate (sqrt (fromIntegral len :: Double))
       numRows = len `div` numColumns
   withSlot texture2DSlot atlasTexture do
-    -- C.withArray (replicate (w * h * numColumns * numRows) (0 :: GLubyte) ) \arr -> do
-    glTexImage2D GL_TEXTURE_2D 0 GL_RED (fromIntegral (w * numColumns)) (fromIntegral (h * numRows)) 0 GL_RED GL_UNSIGNED_BYTE C.nullPtr
+    bracket (C.callocBytes (w * h * numColumns * numRows)) C.free $
+      glTexImage2D GL_TEXTURE_2D 0 GL_RED (fromIntegral (w * numColumns)) (fromIntegral (h * numRows)) 0 GL_RED GL_UNSIGNED_BYTE
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_LINEAR_MIPMAP_NEAREST
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_LINEAR
   atlasGlyphIdToCell <- newIORef . LRU.newLRU . Just . fromIntegral $ len
@@ -92,9 +92,14 @@ addGlyph glyphId w h image atlas = do
           pure ([], (cell, Just kicked))
       k <- atomicModifyIORef' (atlasGlyphIdToCell atlas) (LRU.insertInforming glyphId cell)
       assert (isNothing k) (pure ())
-      let x = cellX * atlasCellWidth atlas
-          y = cellY * atlasCellHeight atlas
+      let
+        cellW = atlasCellWidth atlas
+        cellH = atlasCellHeight atlas
+        x = cellX * cellW
+        y = cellY * cellH
       withSlot texture2DSlot (atlasTexture atlas) do
+        bracket (C.callocBytes (cellW * cellH)) C.free $
+          glTexSubImage2D GL_TEXTURE_2D 0 (fromIntegral x) (fromIntegral y) (fromIntegral cellW) (fromIntegral cellH) GL_RED GL_UNSIGNED_BYTE
         glTexSubImage2D GL_TEXTURE_2D 0 (fromIntegral x) (fromIntegral y) (fromIntegral w) (fromIntegral h) GL_RED GL_UNSIGNED_BYTE image
       pure (x, y, kicked)
 

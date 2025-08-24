@@ -11,6 +11,8 @@ module Weaver
   ( Weaver
   , withWeaver
   , getLineHeight
+  , getAscender
+  , getDescender
   , drawText
   ) where
 
@@ -44,7 +46,7 @@ import FreeType
   , ft_Render_Glyph
   , FT_Bitmap(..)
   , FT_GlyphSlotRec(..)
-  , FT_Size_Metrics(smHeight)
+  , FT_Size_Metrics(smHeight, smAscender, smDescender)
   , FT_SizeRec(srMetrics)
   )
 import qualified Foreign.Storable as C
@@ -76,6 +78,9 @@ withWeaver config action = do
     glUniform1i tex 0
     withFace (configFontPath config) (configFontIndex config) (configFontSizePx config) \weaverFtLib weaverFtFace -> do
       (cellW, cellH) <- globalBboxSize (configFontSizePx config) weaverFtFace
+      putStrLn . ("height " <>) . show . (`div` 64) . smHeight . srMetrics =<< C.peek . frSize =<< C.peek weaverFtFace
+      putStrLn . ("ascender " <>) . show . (`div` 64) . smAscender . srMetrics =<< C.peek . frSize =<< C.peek weaverFtFace
+      putStrLn . ("descender " <>) . show . (`div` 64) . smDescender . srMetrics =<< C.peek . frSize =<< C.peek weaverFtFace
       -- printFace weaverFtFace
       withAtlas 100 cellW cellH \weaverAtlas -> do
         texWidth <- C.withCAString "tex_width" (glGetUniformLocation weaverProgram)
@@ -121,6 +126,14 @@ setResolution (Resolution w h) Weaver{weaverProgram = prog} = do
 getLineHeight :: Weaver -> IO Int
 getLineHeight Weaver{weaverFtFace = face} = do
   fromIntegral . (`div` 64) . smHeight . srMetrics <$> (C.peek . frSize =<< C.peek face)
+
+getAscender :: Weaver -> IO Int
+getAscender Weaver{weaverFtFace = face} = do
+  fromIntegral . (`div` 64) . smAscender . srMetrics <$> (C.peek . frSize =<< C.peek face)
+
+getDescender :: Weaver -> IO Int
+getDescender Weaver{weaverFtFace = face} = do
+  fromIntegral . (`div` 64) . smDescender . srMetrics <$> (C.peek . frSize =<< C.peek face)
 
 drawText :: Weaver -> Resolution -> Int -> Int -> Text.Text -> IO ()
 drawText weaver res originX originY text = do
