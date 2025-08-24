@@ -18,37 +18,7 @@ module Weaver
 
 import Data.FileEmbed (embedFileRelative)
 import Graphics.GL
-  ( pattern GL_TEXTURE_2D
-  , pattern GL_FLOAT
-  , pattern GL_FALSE
-  , pattern GL_POINTS
-  , GLfloat
-  , GLuint
-  , glGenerateMipmap
-  , glGetUniformLocation
-  , glUniform1f
-  , glUniform3f
-  , glUniform1i
-  , glVertexAttribPointer
-  , glEnableVertexAttribArray
-  , glDrawArrays
-  )
 import FreeType
-  ( pattern FT_RENDER_MODE_NORMAL
-  , FT_Library
-  , FT_Face
-  , ft_With_FreeType
-  , ft_With_Face
-  , ft_Set_Pixel_Sizes
-  , FT_FaceRec(..)
-  , FT_BBox(..)
-  , ft_Load_Glyph
-  , ft_Render_Glyph
-  , FT_Bitmap(..)
-  , FT_GlyphSlotRec(..)
-  , FT_Size_Metrics(smHeight, smAscender, smDescender)
-  , FT_SizeRec(srMetrics)
-  )
 import qualified Foreign.Storable as C
 import qualified Foreign.C.String as C
 import qualified Foreign.Ptr as C

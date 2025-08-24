@@ -10,15 +10,6 @@ module Main (main) where
 
 import qualified Graphics.UI.GLFW as GLFW
 import Graphics.GL
-  ( pattern GL_COLOR_BUFFER_BIT
-  , pattern GL_BLEND
-  , pattern GL_SRC_ALPHA
-  , pattern GL_ONE_MINUS_SRC_ALPHA
-  , glEnable
-  , glBlendFunc
-  , glClear
-  , glClearColor
-  )
 import Control.Monad (unless, forM_)
 import Data.Function (fix)
 

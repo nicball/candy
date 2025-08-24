@@ -18,19 +18,6 @@ module Atlas
  ) where
 
 import Graphics.GL
-    ( pattern GL_RED
-    , pattern GL_TEXTURE_2D
-    , pattern GL_UNSIGNED_BYTE
-    , pattern GL_UNPACK_ALIGNMENT
-    , pattern GL_TEXTURE_MIN_FILTER
-    , pattern GL_TEXTURE_MAG_FILTER
-    , pattern GL_LINEAR_MIPMAP_NEAREST
-    , pattern GL_LINEAR
-    , glTexImage2D
-    , glTexParameteri
-    , glTexSubImage2D
-    , glPixelStorei
-    )
 import qualified Data.Cache.LRU as LRU
 import qualified Foreign as C
 import Data.IORef (IORef, newIORef, atomicModifyIORef')

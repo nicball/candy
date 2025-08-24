@@ -39,75 +39,6 @@ module GL
   ) where
 
 import Graphics.GL
-  ( pattern GL_NO_ERROR
-  , pattern GL_TEXTURE_BINDING_2D
-  , pattern GL_TEXTURE_2D
-  , pattern GL_FALSE
-  , pattern GL_COMPILE_STATUS
-  , pattern GL_INFO_LOG_LENGTH
-  , pattern GL_VERTEX_SHADER
-  , pattern GL_GEOMETRY_SHADER
-  , pattern GL_FRAGMENT_SHADER
-  , pattern GL_LINK_STATUS
-  , pattern GL_CURRENT_PROGRAM
-  , pattern GL_ARRAY_BUFFER
-  , pattern GL_ARRAY_BUFFER_BINDING
-  , pattern GL_STREAM_DRAW
-  , pattern GL_VERTEX_ARRAY_BINDING
-  , pattern GL_FRAMEBUFFER
-  , pattern GL_FRAMEBUFFER_BINDING
-  , pattern GL_FRAMEBUFFER_COMPLETE
-  , pattern GL_VIEWPORT
-  , pattern GL_RGB
-  , pattern GL_UNSIGNED_BYTE
-  , pattern GL_TEXTURE_MIN_FILTER
-  , pattern GL_TEXTURE_MAG_FILTER
-  , pattern GL_LINEAR_MIPMAP_NEAREST
-  , pattern GL_LINEAR
-  , pattern GL_COLOR_ATTACHMENT0
-  , pattern GL_TEXTURE_WRAP_S
-  , pattern GL_TEXTURE_WRAP_T
-  , pattern GL_CLAMP_TO_BORDER
-  , pattern GL_TEXTURE_BORDER_COLOR
-  , glGetError
-  , GLenum
-  , GLuint
-  , GLfloat
-  , glGetIntegerv
-  , glGenTextures
-  , glDeleteTextures
-  , glBindTexture
-  , glCreateShader
-  , glDeleteShader
-  , glCompileShader
-  , glShaderSource
-  , glGetShaderiv
-  , glGetShaderInfoLog
-  , glCreateProgram
-  , glDeleteProgram
-  , glAttachShader
-  , glLinkProgram
-  , glGetProgramiv
-  , glGetProgramInfoLog
-  , glUseProgram
-  , glGenBuffers
-  , glDeleteBuffers
-  , glBindBuffer
-  , glBufferData
-  , glGenVertexArrays
-  , glDeleteVertexArrays
-  , glBindVertexArray
-  , glGenFramebuffers
-  , glDeleteFramebuffers
-  , glBindFramebuffer
-  , glViewport
-  , glTexImage2D
-  , glTexParameteri
-  , glTexParameterfv
-  , glFramebufferTexture2D
-  , glCheckFramebufferStatus
-  , glGenerateMipmap
-  )
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Data.List.NonEmpty as NonEmpty
 import Control.Exception (Exception, throwIO, finally, assert)
@@ -322,11 +253,12 @@ renderToTexture :: Resolution -> IO a -> IO Texture
 renderToTexture (Resolution w h) action = do
   texture <- genObject
   withSlot texture2DSlot texture do
-    glTexImage2D GL_TEXTURE_2D 0 GL_RGB (fromIntegral w) (fromIntegral h) 0 GL_RGB GL_UNSIGNED_BYTE C.nullPtr
+    glTexImage2D GL_TEXTURE_2D 0 GL_RGBA (fromIntegral w) (fromIntegral h) 0 GL_RGBA GL_UNSIGNED_BYTE C.nullPtr
     checkGLError "glTexImage2D"
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_LINEAR_MIPMAP_NEAREST
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_LINEAR
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_S GL_CLAMP_TO_BORDER
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_T GL_CLAMP_TO_BORDER
     C.withArray [0, 0, 0, 0] (glTexParameterfv GL_TEXTURE_2D GL_TEXTURE_BORDER_COLOR)
   withObject \fbo -> do
     withSlot framebufferSlot fbo do
