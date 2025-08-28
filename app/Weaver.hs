@@ -48,9 +48,9 @@ withWeaver config action = do
     glUniform1i tex 0
     withFace (configFontPath config) (configFontIndex config) (configFontSizePx config) \weaverFtLib weaverFtFace -> do
       (cellW, cellH) <- globalBboxSize (configFontSizePx config) weaverFtFace
-      putStrLn . ("height " <>) . show . (`div` 64) . smHeight . srMetrics =<< C.peek . frSize =<< C.peek weaverFtFace
-      putStrLn . ("ascender " <>) . show . (`div` 64) . smAscender . srMetrics =<< C.peek . frSize =<< C.peek weaverFtFace
-      putStrLn . ("descender " <>) . show . (`div` 64) . smDescender . srMetrics =<< C.peek . frSize =<< C.peek weaverFtFace
+      -- putStrLn . ("height " <>) . show . (`div` 64) . smHeight . srMetrics =<< C.peek . frSize =<< C.peek weaverFtFace
+      -- putStrLn . ("ascender " <>) . show . (`div` 64) . smAscender . srMetrics =<< C.peek . frSize =<< C.peek weaverFtFace
+      -- putStrLn . ("descender " <>) . show . (`div` 64) . smDescender . srMetrics =<< C.peek . frSize =<< C.peek weaverFtFace
       -- printFace weaverFtFace
       withAtlas 100 cellW cellH \weaverAtlas -> do
         texWidth <- C.withCAString "tex_width" (glGetUniformLocation weaverProgram)

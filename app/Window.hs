@@ -24,7 +24,7 @@ import GL
   , writeArrayBuffer
   , GLObject(deleteObject)
   , Resolution(..)
-  , screenCoordToGL
+  , screenCoordToNDC
   )
 import qualified Data.IntMap as IntMap
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef)
@@ -91,10 +91,10 @@ flush res@(Resolution w h) dwm = do
       withObject $ \vao -> withSlot vertexArraySlot vao $ do
         withObject $ \vbo -> withSlot arrayBufferSlot vbo $ do
           let
-            (topLeftX    , topLeftY    ) = screenCoordToGL res 100           100
-            (topRightX   , topRightY   ) = screenCoordToGL res (w - 1 - 100) 100
-            (bottomLeftX , bottomLeftY ) = screenCoordToGL res 100           (h - 1 - 100)
-            (bottomRightX, bottomRightY) = screenCoordToGL res (w - 1 - 100) (h - 1 - 100)
+            (topLeftX    , topLeftY    ) = screenCoordToNDC res 100           100
+            (topRightX   , topRightY   ) = screenCoordToNDC res (w - 1 - 100) 100
+            (bottomLeftX , bottomLeftY ) = screenCoordToNDC res 100           (h - 1 - 100)
+            (bottomRightX, bottomRightY) = screenCoordToNDC res (w - 1 - 100) (h - 1 - 100)
           writeArrayBuffer
             [ topLeftX    , topLeftY    , 0, 1
             , topRightX   , topRightY   , 1, 1

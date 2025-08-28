@@ -45,8 +45,8 @@ newAtlas len w h = do
   withSlot texture2DSlot atlasTexture do
     bracket (C.callocBytes (w * h * numColumns * numRows)) C.free $
       glTexImage2D GL_TEXTURE_2D 0 GL_RED (fromIntegral (w * numColumns)) (fromIntegral (h * numRows)) 0 GL_RED GL_UNSIGNED_BYTE
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_LINEAR_MIPMAP_NEAREST
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_LINEAR
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST_MIPMAP_NEAREST
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
   atlasGlyphIdToCell <- newIORef . LRU.newLRU . Just . fromIntegral $ len
   atlasFreeCells <- newMVar [(x, y) | y <- [0 .. numRows - 1], x <- [0 .. numColumns - 1]]
   pure $ Atlas

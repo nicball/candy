@@ -35,7 +35,7 @@ module GL
   , viewportSlot
   , renderToTexture
   , Resolution(..)
-  , screenCoordToGL
+  , screenCoordToNDC
   ) where
 
 import Graphics.GL
@@ -255,8 +255,8 @@ renderToTexture (Resolution w h) action = do
   withSlot texture2DSlot texture do
     glTexImage2D GL_TEXTURE_2D 0 GL_RGBA (fromIntegral w) (fromIntegral h) 0 GL_RGBA GL_UNSIGNED_BYTE C.nullPtr
     checkGLError "glTexImage2D"
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_LINEAR_MIPMAP_NEAREST
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_LINEAR
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST_MIPMAP_NEAREST
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_S GL_CLAMP_TO_BORDER
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_T GL_CLAMP_TO_BORDER
     C.withArray [0, 0, 0, 0] (glTexParameterfv GL_TEXTURE_2D GL_TEXTURE_BORDER_COLOR)
@@ -271,8 +271,8 @@ renderToTexture (Resolution w h) action = do
 
 data Resolution = Resolution { resHori :: Int, resVert :: Int }
 
-screenCoordToGL :: Resolution -> Int -> Int -> (GLfloat, GLfloat)
-screenCoordToGL (Resolution w h) x y =
+screenCoordToNDC :: Resolution -> Int -> Int -> (GLfloat, GLfloat)
+screenCoordToNDC (Resolution w h) x y =
   ( -1 + ( (fromIntegral x) * 2 + 1) / fromIntegral w
   ,  1 + (-(fromIntegral y) * 2 - 1) / fromIntegral h
   )
