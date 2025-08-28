@@ -1,8 +1,5 @@
 {-# LANGUAGE DerivingStrategies
            , DeriveAnyClass
-           , BlockArguments
-           , PatternSynonyms
-           , OverloadedStrings
            , FunctionalDependencies
            #-}
 
@@ -249,25 +246,25 @@ instance GLSlot Viewport ViewportSlot where
     pure $ Viewport x y w h
   setSlot _ (Viewport x y w h) = glViewport (fromIntegral x) (fromIntegral y) (fromIntegral w) (fromIntegral h)
 
-renderToTexture :: Resolution -> IO a -> IO Texture
-renderToTexture (Resolution w h) action = do
-  texture <- genObject
-  withSlot texture2DSlot texture do
-    glTexImage2D GL_TEXTURE_2D 0 GL_RGBA (fromIntegral w) (fromIntegral h) 0 GL_RGBA GL_UNSIGNED_BYTE C.nullPtr
-    checkGLError "glTexImage2D"
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST_MIPMAP_NEAREST
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_S GL_CLAMP_TO_BORDER
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_T GL_CLAMP_TO_BORDER
-    C.withArray [0, 0, 0, 0] (glTexParameterfv GL_TEXTURE_2D GL_TEXTURE_BORDER_COLOR)
-  withObject \fbo -> do
-    withSlot framebufferSlot fbo do
-      glFramebufferTexture2D GL_FRAMEBUFFER GL_COLOR_ATTACHMENT0 GL_TEXTURE_2D (unTexture texture) 0
-      checkGLError "glFramebufferTexture2D"
-      flip assert (pure ()) . (== GL_FRAMEBUFFER_COMPLETE) =<< glCheckFramebufferStatus GL_FRAMEBUFFER
-      withSlot viewportSlot (Viewport 0 0 w h) (void action)
-  withSlot texture2DSlot texture (glGenerateMipmap GL_TEXTURE_2D)
-  pure texture
+renderToTexture :: Resolution -> IO a -> (Texture -> IO b) -> IO b
+renderToTexture (Resolution w h) render action =
+  withObject \texture -> do
+    withSlot texture2DSlot texture do
+      glTexImage2D GL_TEXTURE_2D 0 GL_RGBA (fromIntegral w) (fromIntegral h) 0 GL_RGBA GL_UNSIGNED_BYTE C.nullPtr
+      checkGLError "glTexImage2D"
+      glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST_MIPMAP_NEAREST
+      glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
+      glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_S GL_CLAMP_TO_BORDER
+      glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_T GL_CLAMP_TO_BORDER
+      C.withArray [0, 0, 0, 0] (glTexParameterfv GL_TEXTURE_2D GL_TEXTURE_BORDER_COLOR)
+    withObject \fbo -> do
+      withSlot framebufferSlot fbo do
+        glFramebufferTexture2D GL_FRAMEBUFFER GL_COLOR_ATTACHMENT0 GL_TEXTURE_2D (unTexture texture) 0
+        checkGLError "glFramebufferTexture2D"
+        flip assert (pure ()) . (== GL_FRAMEBUFFER_COMPLETE) =<< glCheckFramebufferStatus GL_FRAMEBUFFER
+        withSlot viewportSlot (Viewport 0 0 w h) (void render)
+    withSlot texture2DSlot texture (glGenerateMipmap GL_TEXTURE_2D)
+    action texture
 
 data Resolution = Resolution { resHori :: Int, resVert :: Int }
 

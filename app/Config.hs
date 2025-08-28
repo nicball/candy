@@ -1,11 +1,17 @@
 module Config
   ( Config(..)
+  , FaceID(..)
   ) where
 
 data Config = Config
-  { configFontPath :: FilePath
-  , configFontIndex :: Int
-  , configFontSizePx :: Int
+  { configFace :: FaceID
   , configBackground :: (Float, Float, Float)
   , configForeground :: (Float, Float, Float)
   }
+
+data FaceID = FaceID
+  { faceIDPath :: FilePath
+  , faceIDIndex :: Int
+  , faceIDSizePx :: Int
+  }
+  deriving (Eq, Ord)
