@@ -23,8 +23,8 @@ config :: Config
 config = Config
   { configFace = FaceID
     { faceIDSizePx = 24
-    -- , faceIDPath = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
-    -- , faceIDIndex = 17
+    , faceIDPath = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
+    , faceIDIndex = 17
     --
     -- , faceIDPath = "/nix/store/569nxifmwb4r26phghxyn4xszdg7xjxm-source-han-sans-2.004/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
     -- , faceIDIndex = 27
@@ -32,8 +32,8 @@ config = Config
     -- , faceIDPath = "/nix/store/vl44mgyhq46plr28vfj06zj9lk89jyaw-liberation-fonts-2.1.5/share/fonts/truetype/LiberationSans-Regular.ttf"
     -- , faceIDPath = "/nix/store/hibcvpqv3w7s7fpl3wgd8c33hs0znywq-Iosevka-33.2.3/share/fonts/truetype/Iosevka-ExtendedMedium.ttf"
     -- , faceIDPath = "./font.ttf"
-    , faceIDPath = "/nix/store/46g6p6698lc50ypik6mgg0wf3q23gzqz-dejavu-fonts-2.37/share/fonts/truetype/DejaVuSansMono.ttf"
-    , faceIDIndex = 0
+    -- , faceIDPath = "/nix/store/46g6p6698lc50ypik6mgg0wf3q23gzqz-dejavu-fonts-2.37/share/fonts/truetype/DejaVuSansMono.ttf"
+    -- , faceIDIndex = 0
     }
 
   , configForeground = (0.93, 0.94, 0.96)
@@ -49,10 +49,9 @@ main = do
       withDemoWindow config \dw -> do
         _ <- registerWindow dw wm
 
-        uncurry (onResize (redraw wm) win) =<< GLFW.getFramebufferSize win
-        GLFW.setFramebufferSizeCallback win (Just (onResize (redraw wm)))
-
-        -- GLFW.setWindowRefreshCallback win (Just redraw)
+        GLFW.setFramebufferSizeCallback win (Just onResize)
+        uncurry (onResize win) =<< GLFW.getFramebufferSize win
+        GLFW.setWindowRefreshCallback win (Just (redraw wm))
 
         fix \loop -> do
           GLFW.waitEvents
@@ -61,9 +60,8 @@ main = do
           unless c loop
   where
 
-    onResize redraw win w h = do
+    onResize _ w h = do
       setSlot viewportSlot (Viewport 0 0 w h)
-      redraw win
 
     redraw wm win = do
       let (clearColorR, clearColorG, clearColorB) = configBackground config

@@ -54,7 +54,7 @@ withWeaver config action = do
     -- putStrLn . ("ascender " <>) . show . (`div` 64) . smAscender . srMetrics =<< C.peek . frSize =<< C.peek weaverFtFace
     -- putStrLn . ("descender " <>) . show . (`div` 64) . smDescender . srMetrics =<< C.peek . frSize =<< C.peek weaverFtFace
     -- printFace weaverFtFace
-    withAtlas 100 cellW cellH \weaverAtlas -> do
+    withAtlas 500 cellW cellH \weaverAtlas -> do
       texWidth <- C.withCAString "tex_width" (glGetUniformLocation weaverProgram)
       glUniform1f texWidth (fromIntegral (atlasWidth weaverAtlas))
       texHeight <- C.withCAString "tex_height" (glGetUniformLocation weaverProgram)
