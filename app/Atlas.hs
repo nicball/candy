@@ -37,7 +37,7 @@ newAtlas len w h = do
     glPixelStorei GL_UNPACK_ALIGNMENT 1
     bracket (C.callocBytes (w * h * numColumns * numRows)) C.free $
       glTexImage2D GL_TEXTURE_2D 0 GL_RED (fromIntegral (w * numColumns)) (fromIntegral (h * numRows)) 0 GL_RED GL_UNSIGNED_BYTE
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST_MIPMAP_NEAREST
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
   atlasGlyphIdToCell <- LRU.newAtomicLRU . Just . fromIntegral $ len
   atlasFreeCells <- newMVar . take len $ [(x * w, y * h) | y <- [0 .. numRows - 1], x <- [0 .. numColumns - 1]]

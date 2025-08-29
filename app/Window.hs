@@ -24,7 +24,7 @@ import GL
   , writeArrayBuffer
   , GLObject(deleteObject)
   , Resolution(..)
-  , screenCoordToNDC
+  , pixelQuadToNDC
   )
 import qualified GL
 import qualified Data.IntMap as IntMap
@@ -72,9 +72,9 @@ withDefaultWindowManager action =
       withObject \dwmVBO -> do
         withSlot arrayBufferSlot dwmVBO do
           withSlot vertexArraySlot dwmVAO do
-            glVertexAttribPointer 0 2 GL_FLOAT GL_FALSE 16 nullPtr
+            glVertexAttribPointer 0 2 GL_FLOAT GL_FALSE 8 nullPtr
             glEnableVertexAttribArray 0
-            glVertexAttribPointer 1 2 GL_FLOAT GL_FALSE 16 (plusPtr nullPtr 8)
+            glVertexAttribPointer 1 2 GL_FLOAT GL_FALSE 8 (plusPtr nullPtr 32)
             glEnableVertexAttribArray 1
         action DefaultWindowManager {..}
   where
@@ -112,27 +112,30 @@ instance WindowManager DefaultWindowManager where
 flush :: Resolution -> DefaultWindowManager -> IO ()
 flush res@(Resolution w h) dwm = do
   [(0, onlyWin)] <- IntMap.assocs <$> readIORef (dwmWindows dwm)
-  let texRes = Resolution (w - 99 * 2) (h - 99 * 2)
+  let texRes = Resolution (w - 100 * 2) (h - 100 * 2)
   case onlyWin of
-    WindowInfo win _ -> renderToTexture texRes (drawWindow texRes win) \tex -> do
+    WindowInfo win _ -> drawWindow res win ... renderToTexture texRes (drawWindow texRes win) \tex -> do
       bindProgram (dwmProg dwm) do
         withSlot texture2DSlot tex do
           withSlot vertexArraySlot (dwmVAO dwm) do
             withSlot arrayBufferSlot (dwmVBO dwm) do
-              let
-                (topLeftX    , topLeftY    ) = screenCoordToNDC res 100           100
-                (topRightX   , topRightY   ) = screenCoordToNDC res (w - 1 - 100) 100
-                (bottomLeftX , bottomLeftY ) = screenCoordToNDC res 100           (h - 1 - 100)
-                (bottomRightX, bottomRightY) = screenCoordToNDC res (w - 1 - 100) (h - 1 - 100)
-              writeArrayBuffer
-                [ topLeftX    , topLeftY    , 0, 1
-                , topRightX   , topRightY   , 1, 1
-                , bottomLeftX , bottomLeftY , 0, 0
-                , bottomRightX, bottomRightY, 1, 0
+              writeArrayBuffer $
+                pixelQuadToNDC res
+                  ( (100, 100)
+                  , (w - 1 - 100, 100)
+                  , (100, h - 1 - 100)
+                  , (w - 1 - 100, h - 1 - 100)
+                  )
+                ++
+                [ 0, 1
+                , 1, 1
+                , 0, 0
+                , 1, 0
                 ]
               texVar <- withCAString "tex" (glGetUniformLocation (dwmProg dwm))
               glUniform1i texVar 0
               glDrawArrays GL_TRIANGLE_STRIP 0 4
+  where _ ... a = a
 
 data DemoWindow = DemoWindow
   { dwScrollPos :: IORef Double
@@ -167,5 +170,5 @@ instance Window DemoWindow where
       let y = linePos idx
       drawText dwWeaver res 5 y (Text.pack (show idx))
       drawText dwWeaver res 50 y ln
-    -- drawText weaver res 30 height "file is filling the office."
-    -- drawText weaver res 30 (height * 2) "OPPO回应苹果起诉员工窃密：并未侵犯苹果公司商业秘密，相信公正的司法审理能够澄清事实。"
+    -- drawText dwWeaver res 30 (height + descender) "file is filling the office."
+    -- drawText dwWeaver res 30 (height * 2 + descender) "OPPO回应苹果起诉员工窃密：并未侵犯苹果公司商业秘密，相信公正的司法审理能够澄清事实。"

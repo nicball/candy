@@ -32,7 +32,7 @@ module GL
   , viewportSlot
   , renderToTexture
   , Resolution(..)
-  , screenCoordToNDC
+  , pixelQuadToNDC
   ) where
 
 import Graphics.GL
@@ -253,7 +253,7 @@ renderToTexture (Resolution w h) render action =
     withSlot texture2DSlot texture do
       glTexImage2D GL_TEXTURE_2D 0 GL_RGBA (fromIntegral w) (fromIntegral h) 0 GL_RGBA GL_UNSIGNED_BYTE C.nullPtr
       checkGLError "glTexImage2D"
-      glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST_MIPMAP_NEAREST
+      glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST
       glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
       glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_S GL_CLAMP_TO_BORDER
       glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_T GL_CLAMP_TO_BORDER
@@ -269,8 +269,16 @@ renderToTexture (Resolution w h) render action =
 
 data Resolution = Resolution { resHori :: Int, resVert :: Int }
 
-screenCoordToNDC :: Resolution -> Int -> Int -> (GLfloat, GLfloat)
-screenCoordToNDC (Resolution w h) x y =
-  ( -1 + ( (fromIntegral x) * 2 + 1) / fromIntegral w
-  ,  1 + (-(fromIntegral y) * 2 - 1) / fromIntegral h
-  )
+pixelQuadToNDC :: Resolution -> ((Int, Int), (Int, Int), (Int, Int), (Int, Int)) -> [GLfloat]
+pixelQuadToNDC (Resolution w h) (tl, tr, bl, br) =
+  concat
+    [ scale tl 0 1
+    , scale tr 1 1
+    , scale bl 0 0
+    , scale br 1 0
+    ]
+  where
+    scale (x, y) dx dy =
+      [ -1 + (fromIntegral x + dx)      * 2 / fromIntegral w
+      ,  1 + (-fromIntegral y + 1 + dy) * 2 / fromIntegral h
+      ]
