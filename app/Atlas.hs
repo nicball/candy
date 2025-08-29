@@ -57,7 +57,7 @@ freeAtlas Atlas{atlasTexture = tex} = deleteObject tex
 withAtlas :: Int -> Int -> Int -> (Atlas a -> IO b) -> IO b
 withAtlas len w h = bracket (newAtlas len w h) freeAtlas
 
-addGlyph :: Show a => Int -> IO (Int, Int, (C.Ptr () -> IO ()) -> IO (), Int -> Int -> a) -> (a -> (Int, Int)) -> Atlas a -> IO (a, Maybe Int)
+addGlyph :: Int -> IO (Int, Int, (C.Ptr () -> IO ()) -> IO (), Int -> Int -> a) -> (a -> (Int, Int)) -> Atlas a -> IO (a, Maybe Int)
 addGlyph glyphId render cellFromUserdata atlas = do
   found <- LRU.lookup glyphId (atlasGlyphIdToCell atlas)
   case found of
@@ -70,7 +70,6 @@ addGlyph glyphId render cellFromUserdata atlas = do
           Just (kicked, userdata) <- LRU.pop (atlasGlyphIdToCell atlas)
           pure ([], (cellFromUserdata userdata, Just kicked))
       let userdata = userdataFromCell x y
-      print userdata
       LRU.insert glyphId userdata (atlasGlyphIdToCell atlas)
       let
         cellW = atlasCellWidth atlas

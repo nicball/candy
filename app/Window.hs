@@ -146,7 +146,7 @@ withDemoWindow config action = do
     action DemoWindow {..}
 
 instance Scroll DemoWindow where
-  scroll _ y DemoWindow{..} = modifyIORef dwScrollPos (+ y)
+  scroll _ y DemoWindow{..} = modifyIORef dwScrollPos (min 0 . (+ y))
 
 instance Window DemoWindow where
   drawWindow res DemoWindow{..} = do
@@ -159,9 +159,12 @@ instance Window DemoWindow where
     --     drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s) "haha"
     height <- getLineHeight dwWeaver
     descender <- getDescender dwWeaver
-    pos <- (* height) . truncate <$> readIORef dwScrollPos
-    Text.lines <$> Text.readFile "./app/Weaver.hs" >>= \lns -> forM_ (zip [1 ..] lns) \(idx, ln) -> do
-      let y = height * idx + descender + pos
+    offset <- (* height) . truncate <$> readIORef dwScrollPos
+    let linePos idx = height * idx + descender + offset
+        onScreen pos = pos >= (height * (-5)) && pos <= (resVert res + height * 5)
+        filter' p = takeWhile p . dropWhile (not . p)
+    Text.lines <$> Text.readFile "./app/Weaver.hs" >>= \lns -> forM_ (filter' (onScreen . linePos . fst) . zip [1 ..] $ lns) \(idx, ln) -> do
+      let y = linePos idx
       drawText dwWeaver res 5 y (Text.pack (show idx))
       drawText dwWeaver res 50 y ln
     -- drawText weaver res 30 height "file is filling the office."

@@ -50,10 +50,6 @@ withWeaver config action = do
     let weaverFace = configFace config
     weaverFtFace <- getFaceCached weaverFace
     (cellW, cellH) <- globalBboxSize (faceIDSizePx weaverFace) weaverFtFace
-    -- putStrLn . ("height " <>) . show . (`div` 64) . smHeight . srMetrics =<< C.peek . frSize =<< C.peek weaverFtFace
-    -- putStrLn . ("ascender " <>) . show . (`div` 64) . smAscender . srMetrics =<< C.peek . frSize =<< C.peek weaverFtFace
-    -- putStrLn . ("descender " <>) . show . (`div` 64) . smDescender . srMetrics =<< C.peek . frSize =<< C.peek weaverFtFace
-    -- printFace weaverFtFace
     withAtlas 500 cellW cellH \weaverAtlas -> do
       texWidth <- C.withCAString "tex_width" (glGetUniformLocation weaverProgram)
       glUniform1f texWidth (fromIntegral (atlasWidth weaverAtlas))
@@ -79,24 +75,6 @@ withWeaver config action = do
               glVertexAttribPointer 3 2 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (4 * floatSize))
               glEnableVertexAttribArray 3
           action Weaver {..}
-            
-  -- where
-  --   printFace face = do
-  --     rcd <- C.peek face
-  --     print $ "num faces " <> show (frNum_faces rcd)
-  --     print . ("family name " <>) . show =<< (C.peekCString . C.castPtr . frFamily_name $ rcd)
-  --     print . ("family name " <>) . show =<< (C.peekCString . C.castPtr . frStyle_name $ rcd)
-  --     let FT_BBox{..} = frBbox rcd
-  --     print $ "xMin " <> show bbXMin
-  --     print $ "xMax " <> show bbXMax
-  --     print $ "yMin " <> show bbYMin
-  --     print $ "yMax " <> show bbYMax
-  --     print $ "units per EM " <> show (frUnits_per_EM rcd)
-  --     print $ "ascender " <> show (frAscender rcd)
-  --     print $ "descender " <> show (frDescender rcd)
-  --     print $ "height " <> show (frHeight rcd)
-  --     print $ "max advance width " <> show (frMax_advance_width rcd)
-  --     print $ "underline position " <> show (frUnderline_position rcd)
 
 setResolution :: Resolution -> Weaver -> IO ()
 setResolution (Resolution w h) Weaver{weaverProgram = prog} = do
@@ -131,9 +109,6 @@ drawText weaver res originX originY text = do
   where
     genVertexArray = do
       glyphs <- Raqm.getGlyphs =<< layoutTextCached (weaverFace weaver) text
-      -- let lift f (a, b, c) = (f a, f b, f c)
-      -- forM_ [0 .. Text.lengthWord8 text - 1]
-      --   (print <=< (fmap (lift (`div` 64)) . Raqm.indexToPosition (weaverRaqm weaver)))
       renderedGlyphs <- renderGlyphToAtlas weaver (Raqm.gIndex <$> glyphs)
       concat . reverse . snd <$> foldM renderGlyph (0, []) (zip glyphs renderedGlyphs)
       where
@@ -146,13 +121,6 @@ drawText weaver res originX originY text = do
             y = -gTopBearing + gHeight - yOffset + originY
           in
             pure (penX + xAdvance, [x, y, gWidth, gHeight, gAtlasX, gAtlasY] : result)
-
--- withFace :: FilePath -> Int -> Int -> (FT_Library -> FT_Face -> IO a) -> IO a
--- withFace fontPath fontIndex fontSizePx action = do
---   ft_With_FreeType \lib -> do
---     ft_With_Face lib fontPath (fromIntegral fontIndex) \face -> do
---       ft_Set_Pixel_Sizes face 0 (fromIntegral fontSizePx)
---       action lib face
 
 {-# NOINLINE globalFtLib #-}
 globalFtLib :: FT_Library
