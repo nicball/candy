@@ -60,8 +60,8 @@ withWeaver config action = do
       texHeight <- C.withCAString "tex_height" (glGetUniformLocation weaverProgram)
       glUniform1f texHeight (fromIntegral (atlasHeight weaverAtlas))
       penColor <- C.withCAString "pen_color" (glGetUniformLocation weaverProgram)
-      let (penColorR, penColorG, penColorB) = configForeground config
-      glUniform3f penColor penColorR penColorG penColorB
+      let (penColorR, penColorG, penColorB, penColorA) = configForeground config
+      glUniform4f penColor penColorR penColorG penColorB penColorA
       withObject \weaverVBO -> do
         withObject \weaverVAO -> do
           withSlot arrayBufferSlot weaverVBO do

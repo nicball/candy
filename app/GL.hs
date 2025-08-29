@@ -85,6 +85,7 @@ withWindow width height title action = do
   GLFW.windowHint $ GLFW.WindowHint'ContextVersionMinor 3
   GLFW.windowHint $ GLFW.WindowHint'OpenGLForwardCompat True
   GLFW.windowHint $ GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core
+  GLFW.windowHint $ GLFW.WindowHint'TransparentFramebuffer True
   win <- GLFW.createWindow width height title Nothing Nothing
   case win of
     Nothing -> throwIO . GLFWException $ "Unable to create windows."

@@ -1,6 +1,7 @@
 module Window
   ( Window(..)
   , WindowID
+  , Scroll(..)
   , WindowManager(..)
   , DefaultWindowManager
   , withDefaultWindowManager
@@ -39,12 +40,15 @@ import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import Weaver (Weaver, drawText, withWeaver, getLineHeight, getDescender)
 
-class Window a where
+class Scroll a where
+  scroll :: Double -> Double -> a -> IO ()
+
+class Scroll a => Window a where
   drawWindow :: Resolution -> a -> IO ()
 
 newtype WindowID = WindowID Int
 
-class WindowManager a where
+class Scroll a => WindowManager a where
   registerWindow :: Window w => w -> a -> IO WindowID
   needRedraw :: WindowID -> a -> IO ()
 
@@ -94,6 +98,9 @@ withDefaultWindowManager action =
       , "}"
       ]
 
+instance Scroll DefaultWindowManager where
+  scroll x y dwm = readIORef (dwmWindows dwm) >>= mapM_ (\case WindowInfo w _ -> scroll x y w) . IntMap.elems
+
 instance WindowManager DefaultWindowManager where
   registerWindow w wm = do
     wid <- IntMap.size <$> readIORef (dwmWindows wm)
@@ -127,13 +134,22 @@ flush res@(Resolution w h) dwm = do
               glUniform1i texVar 0
               glDrawArrays GL_TRIANGLE_STRIP 0 4
 
-data DemoWindow = DemoWindow Weaver
+data DemoWindow = DemoWindow
+  { dwScrollPos :: IORef Double
+  , dwWeaver :: Weaver
+  }
 
 withDemoWindow :: Config -> (DemoWindow -> IO a) -> IO a
-withDemoWindow config action = withWeaver config (action . DemoWindow)
+withDemoWindow config action = do
+  dwScrollPos <- newIORef 0
+  withWeaver config \dwWeaver -> do
+    action DemoWindow {..}
+
+instance Scroll DemoWindow where
+  scroll _ y DemoWindow{..} = modifyIORef dwScrollPos (+ y)
 
 instance Window DemoWindow where
-  drawWindow res@(Resolution w h) (DemoWindow weaver) = do
+  drawWindow res DemoWindow{..} = do
     glClearColor 0.2 0.2 0.2 1
     glClear GL_COLOR_BUFFER_BIT
     -- forM_ [16, 32, 64, 128] \s -> do
@@ -141,10 +157,12 @@ instance Window DemoWindow where
     --     drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s - 1) "haha"
     --   withWeaver cfg { configFontSizePx = s } \weaver -> do
     --     drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s) "haha"
-    height <- getLineHeight weaver
-    descender <- getDescender weaver
-    -- Text.lines <$> Text.readFile "./app/Weaver.hs" >>= \lns -> forM_ (zip [1 ..] lns) \(idx, ln) -> do
-    --   drawText weaver res 5 (height * idx + descender) (Text.pack (show idx))
-    --   drawText weaver res 50 (height * idx + descender) ln
-    drawText weaver res 30 height "file is filling the office."
-    drawText weaver res 30 (height * 2) "OPPO回应苹果起诉员工窃密：并未侵犯苹果公司商业秘密，相信公正的司法审理能够澄清事实。"
+    height <- getLineHeight dwWeaver
+    descender <- getDescender dwWeaver
+    pos <- (* height) . truncate <$> readIORef dwScrollPos
+    Text.lines <$> Text.readFile "./app/Weaver.hs" >>= \lns -> forM_ (zip [1 ..] lns) \(idx, ln) -> do
+      let y = height * idx + descender + pos
+      drawText dwWeaver res 5 y (Text.pack (show idx))
+      drawText dwWeaver res 50 y ln
+    -- drawText weaver res 30 height "file is filling the office."
+    -- drawText weaver res 30 (height * 2) "OPPO回应苹果起诉员工窃密：并未侵犯苹果公司商业秘密，相信公正的司法审理能够澄清事实。"

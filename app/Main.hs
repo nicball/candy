@@ -17,6 +17,7 @@ import Window
   , DemoWindow
   , withDemoWindow
   , WindowManager(registerWindow)
+  , scroll
   )
 
 config :: Config
@@ -36,8 +37,8 @@ config = Config
     -- , faceIDIndex = 0
     }
 
-  , configForeground = (0.93, 0.94, 0.96)
-  , configBackground = (0.18, 0.2, 0.25)
+  , configForeground = (0.93, 0.94, 0.96, 1)
+  , configBackground = (0.18, 0.2, 0.25, 0.8)
   }
 
 main :: IO ()
@@ -49,9 +50,10 @@ main = do
       withDemoWindow config \dw -> do
         _ <- registerWindow dw wm
 
-        GLFW.setFramebufferSizeCallback win (Just onResize)
+        GLFW.setFramebufferSizeCallback win (Just \win w h -> onResize win w h)
         uncurry (onResize win) =<< GLFW.getFramebufferSize win
         GLFW.setWindowRefreshCallback win (Just (redraw wm))
+        GLFW.setScrollCallback win (Just \win x y -> scroll x y wm >> redraw wm win)
 
         fix \loop -> do
           GLFW.waitEvents
@@ -64,8 +66,9 @@ main = do
       setSlot viewportSlot (Viewport 0 0 w h)
 
     redraw wm win = do
-      let (clearColorR, clearColorG, clearColorB) = configBackground config
-      glClearColor clearColorR clearColorG clearColorB 1
+      GLFW.getWindowSize win >>= uncurry (onResize win)
+      let (clearColorR, clearColorG, clearColorB, clearColorA) = configBackground config
+      glClearColor clearColorR clearColorG clearColorB clearColorA
       glClear GL_COLOR_BUFFER_BIT
 
       Viewport 0 0 w h <- getSlot viewportSlot

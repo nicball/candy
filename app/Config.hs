@@ -5,8 +5,8 @@ module Config
 
 data Config = Config
   { configFace :: FaceID
-  , configBackground :: (Float, Float, Float)
-  , configForeground :: (Float, Float, Float)
+  , configBackground :: (Float, Float, Float, Float)
+  , configForeground :: (Float, Float, Float, Float)
   }
 
 data FaceID = FaceID
