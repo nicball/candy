@@ -280,5 +280,5 @@ pixelQuadToNDC (Resolution w h) (tl, tr, bl, br) =
   where
     scale (x, y) dx dy =
       [ -1 + (fromIntegral x + dx)      * 2 / fromIntegral w
-      ,  1 + (-fromIntegral y + 1 + dy) * 2 / fromIntegral h
+      ,  1 + (-fromIntegral y - 1 + dy) * 2 / fromIntegral h
       ]

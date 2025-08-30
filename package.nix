@@ -1,5 +1,5 @@
 { mkDerivation, base, bytestring, containers, file-embed, freetype2
-, gl, GLFW-b, lib, lrucache, libraqm, text
+, gl, GLFW-b, lib, lrucache, libraqm, text, text-icu
 }:
 mkDerivation {
   pname = "candy";
@@ -9,7 +9,7 @@ mkDerivation {
   isExecutable = true;
   executableHaskellDepends = [
     base bytestring containers file-embed freetype2 gl GLFW-b lrucache
-    text
+    text text-icu
   ];
   executablePkgconfigDepends = [ libraqm ];
   homepage = "https://github.com/nicball/candy";

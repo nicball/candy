@@ -142,7 +142,7 @@ indexToPosition rq pos =
     alloca $ \px ->
       alloca $ \py -> do
         checkBool "indexToPosition" =<< indexToPosition_ rq ppos px py
-        (,,) <$> (fromIntegral <$> peek ppos) <*> (fromIntegral <$> peek px) <*> (fromIntegral <$> peek py)
+        (,,) <$> (fromIntegral <$> peek ppos) <*> (fromIntegral . (`div` 64) <$> peek px) <*> (fromIntegral . (`div` 64) <$> peek py)
 
 foreign import ccall "raqm_position_to_index"
   positionToIndex_ :: Raqm -> C.CInt -> C.CInt -> C.Ptr C.CSize -> IO Bool
@@ -150,5 +150,5 @@ foreign import ccall "raqm_position_to_index"
 positionToIndex :: Raqm -> Int -> Int -> IO Int
 positionToIndex rq x y =
   alloca $ \pindex -> do
-    checkBool "positionToIndex" =<< positionToIndex_ rq (fromIntegral x) (fromIntegral y) pindex
+    checkBool "positionToIndex" =<< positionToIndex_ rq (fromIntegral x * 64) (fromIntegral y * 64) pindex
     fromIntegral <$> peek pindex

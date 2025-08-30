@@ -92,7 +92,7 @@ executable candy
     containers,
     lrucache,
     file-embed,
-    -- text-icu
+    text-icu
 
   pkgconfig-depends:
     raqm

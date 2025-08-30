@@ -10,6 +10,7 @@ module Weaver
   , getAscender
   , getDescender
   , drawText
+  , layoutTextCached
   ) where
 
 import Data.FileEmbed (embedFileRelative)
@@ -116,8 +117,8 @@ drawText weaver res originX originY text = do
           let
             xOffset = fromIntegral . (`div` 64) . Raqm.gXOffset $ glyph
             yOffset = fromIntegral . (`div` 64) . Raqm.gYOffset $ glyph
-            xAdvance = fromIntegral . (`div` 64) . Raqm.gXAdvance $ glyph
-            x = penX + gLeftBearing + xOffset + originX
+            xAdvance = fromIntegral . Raqm.gXAdvance $ glyph
+            x = (penX `div` 64) + gLeftBearing + xOffset + originX
             y = -gTopBearing + gHeight - yOffset + originY
           in
             pure (penX + xAdvance, [x, y, gWidth, gHeight, gAtlasX, gAtlasY] : result)

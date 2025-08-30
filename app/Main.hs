@@ -4,31 +4,29 @@ module Main (main) where
 
 import qualified Graphics.UI.GLFW as GLFW
 import Graphics.GL
-import Control.Monad (unless, forM_)
+import Control.Monad (unless, when)
 import Data.Function (fix)
 
 import GL (withGLFW, withWindow, getSlot, setSlot, viewportSlot, Viewport(..), Resolution(..))
 import Config (Config(..), FaceID(..))
 import Window
-  ( drawWindow
-  , flush
+  ( flush
   , withDefaultWindowManager
-  , DefaultWindowManager
-  , DemoWindow
   , withDemoWindow
   , WindowManager(registerWindow)
   , scroll
+  , sendKey
   )
 
 config :: Config
 config = Config
   { configFace = FaceID
     { faceIDSizePx = 24
-    -- , faceIDPath = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
-    -- , faceIDIndex = 17
+    , faceIDPath = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
+    , faceIDIndex = 17
 
-    , faceIDPath = "/nix/store/569nxifmwb4r26phghxyn4xszdg7xjxm-source-han-sans-2.004/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
-    , faceIDIndex = 27
+    -- , faceIDPath = "/nix/store/569nxifmwb4r26phghxyn4xszdg7xjxm-source-han-sans-2.004/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
+    -- , faceIDIndex = 27
 
     -- , faceIDPath = "/nix/store/vl44mgyhq46plr28vfj06zj9lk89jyaw-liberation-fonts-2.1.5/share/fonts/truetype/LiberationSans-Regular.ttf"
     -- , faceIDPath = "/nix/store/hibcvpqv3w7s7fpl3wgd8c33hs0znywq-Iosevka-33.2.3/share/fonts/truetype/Iosevka-ExtendedMedium.ttf"
@@ -54,6 +52,10 @@ main = do
         uncurry (onResize win) =<< GLFW.getFramebufferSize win
         GLFW.setWindowRefreshCallback win (Just (redraw wm))
         GLFW.setScrollCallback win (Just \win x y -> scroll x y wm >> redraw wm win)
+        GLFW.setKeyCallback win . Just $ \win key _ state mods -> do
+          when (state /= GLFW.KeyState'Released) do
+            sendKey key mods wm
+            redraw wm win
 
         fix \loop -> do
           GLFW.waitEvents
