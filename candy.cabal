@@ -71,7 +71,8 @@ executable candy
     Config,
     Weaver,
     Raqm,
-    Window
+    Window,
+    Document
 
   extra-source-files:
     app/weaver.vert

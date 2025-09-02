@@ -31,7 +31,7 @@ import qualified GL
 import qualified Data.IntMap as IntMap
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef, writeIORef)
 import Weaver (drawText, withWeaver)
-import Config (Config(..))
+import Config (Config(..), FaceID(..))
 import Graphics.GL
 import Foreign.Ptr (nullPtr, plusPtr)
 import Foreign.C (withCAString)
@@ -48,6 +48,7 @@ import Unsafe.Coerce (unsafeCoerce)
 import Control.Monad (when)
 import qualified Raqm
 import qualified Foreign.Marshal.Array as C
+import Document
 
 class Scroll a where
   scroll :: Double -> Double -> a -> IO ()
@@ -156,9 +157,8 @@ flush res@(Resolution w h) dwm = do
 data DemoWindow = DemoWindow
   { dwScrollPos :: IORef Double
   , dwWeaver :: Weaver
-  , dwText :: Text.Text
-  , dwBreakIter :: ICUIO.BreakIterator ()
-  , dwCursorPos :: IORef Text.I8
+  , dwDocument :: Document
+  , dwCursorPos :: IORef Coord
   , dwConfig :: Config
   , dwCursor :: Cursor
   }
@@ -166,9 +166,8 @@ data DemoWindow = DemoWindow
 withDemoWindow :: Config -> (DemoWindow -> IO a) -> IO a
 withDemoWindow dwConfig action = do
   dwScrollPos <- newIORef 0
-  dwText <- Text.readFile "./app/Weaver.hs"
-  dwBreakIter <- ICUIO.breakCharacter ICU.Current dwText
-  dwCursorPos <- newIORef 0
+  dwDocument <- Document.fromText <$> Text.readFile "./app/Weaver.hs"
+  dwCursorPos <- newIORef (Coord 0 0)
   withWeaver dwConfig \dwWeaver -> do
     withCursor \dwCursor -> do
       action DemoWindow {..}
@@ -180,14 +179,8 @@ instance SendKey DemoWindow where
   sendKey key mods DemoWindow{..} = do
     when (mods == GLFW.ModifierKeys False False False False False False) do
       case key of
-        GLFW.Key'L -> do
-          pos <- readIORef dwCursorPos
-          next <- maybe pos unsafeCoerce <$> ICUIO.following dwBreakIter (fromIntegral pos)
-          writeIORef dwCursorPos next
-        GLFW.Key'H -> do
-          pos <- readIORef dwCursorPos
-          next <- maybe pos unsafeCoerce <$> ICUIO.preceding dwBreakIter (fromIntegral pos)
-          writeIORef dwCursorPos next
+        GLFW.Key'L -> modifyIORef dwCursorPos (Document.moveCoord dwDocument 1)
+        GLFW.Key'H -> modifyIORef dwCursorPos (Document.moveCoord dwDocument (-1))
         _ -> pure ()
 
 instance Window DemoWindow where
@@ -201,26 +194,25 @@ instance Window DemoWindow where
     --     drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s) "haha"
     height <- getLineHeight dwWeaver
     descender <- getDescender dwWeaver
-    screenOffset <- (* height) . truncate <$> readIORef dwScrollPos
-    let linePos idx = height * idx + descender + screenOffset
-        onScreen pos = pos >= (height * (-5)) && pos <= (resVert res + height * 5)
-        filter' p = takeWhile p . dropWhile (not . p)
-    forM_ (filter' (onScreen . linePos . fst) . zip [1 ..] . withLnOffset 0 . Text.lines $ dwText) \(idx, (lnOffset, ln)) -> do
+    beginLine <- negate . truncate <$> readIORef dwScrollPos
+    let linePos idx = height * (idx - beginLine + 1) + descender
+        numLines = resVert res `divSat` height
+        divSat a b = let (r, m) = divMod a b in if m /= 0 then r + 1 else r
+    Coord cln ccol <- readIORef dwCursorPos
+    forM_ [ beginLine .. beginLine + numLines - 1 ] \idx -> do
       let y = linePos idx
-      cursorPos <- fromIntegral <$> readIORef dwCursorPos
-      let cursorPosInline = cursorPos - lnOffset
-      when (lnOffset <= cursorPos && cursorPosInline < Text.lengthWord8 ln) do
-        rq <- layoutTextCached (configFace dwConfig) ln
-        (_, xStart, _) <- if cursorPosInline == 0 then pure (0, 0, 0) else Raqm.indexToPosition rq (cursorPosInline - 1)
-        (_, xEnd, _) <- Raqm.indexToPosition rq cursorPosInline
+      let ln = docGetLine idx dwDocument
+      let content = Text.dropWhileEnd (== '\n') ln
+      let getMid (_, x, _) = x
+      when (idx == cln) do
+        rq <- layoutTextCached (configFace dwConfig) content
+        xStart <- if ccol == 0 then pure 0 else getMid <$> Raqm.indexToPosition rq (ccol - 1)
+        xEnd <- if ccol == Text.lengthWord8 ln - 1 then pure (xStart + (faceIDSizePx (configFace dwConfig) `div` 2)) else getMid <$> Raqm.indexToPosition rq ccol
         drawCursor res dwCursor y (50 + xStart) (50 + xEnd)
       drawText dwWeaver res 5 y (Text.pack (show idx))
-      drawText dwWeaver res 50 y ln
+      drawText dwWeaver res 50 y content
     -- drawText dwWeaver res 30 (height + descender) "file is filling the office."
     -- drawText dwWeaver res 30 (height * 2 + descender) "OPPO回应苹果起诉员工窃密：并未侵犯苹果公司商业秘密，相信公正的司法审理能够澄清事实。"
-    where
-      withLnOffset _ [] = []
-      withLnOffset o (x : xs) = (o, x) : withLnOffset (o + Text.lengthWord8 x + 1) xs
 
 data Cursor = Cursor
   { cursorProg :: GLuint
