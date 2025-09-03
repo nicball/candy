@@ -3,6 +3,15 @@
            , TemplateHaskell
            #-}
 
+{-
+-<< -< -<- <-- <--- <<- <- -> ->> --> ---> ->- >- >>-
+=<< =< =<= <== <=== <<= <= => =>> ==> ===> =>= >= >>=
+<-> <--> <---> <----> <=> <==> <===> <====> :: ::: __
+<~~ </ </> /> ~~> == != /= ~= <> === !== !==== =/= =!=
+<: := *= *+ <* <*> *> <| <|> |> <. <.> .> +* =* =: :>
+(* *) /* */ [| |] {| |} ++ +++ \/ /\ |- -| <!-- <!---
+-}
+
 module Weaver
   ( Weaver
   , withWeaver
@@ -170,6 +179,7 @@ layoutTextCached faceID text = lookupCached (faceID, text) new (Raqm.destroy . s
       Raqm.setLanguage rq "en" 0 (Text.lengthWord8 text)
       face <- getFaceCached faceID
       Raqm.setFreetypeFace rq face
+      -- Raqm.addFontFeature rq "dlig"
       Raqm.layout rq
       pure rq
 

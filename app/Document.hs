@@ -11,6 +11,8 @@ module Document
   , moveCoord
   , fromText
   , toText
+  , breakWithCoord
+  , breakBackwardWithCoord
   ) where
 
 import qualified Data.Text as Text
@@ -27,7 +29,9 @@ data Document = Document
   { docLines :: Seq Text
   }
 data Coord = Coord { coordLine :: Int, coordColumn :: Int }
+  deriving Show
 data Iv = Iv { ivBegin :: Coord, ivEnd :: Coord }
+  deriving Show
 -- data EndOfLine = Cr | Lf | CrLf
 
 empty :: Document
@@ -64,34 +68,13 @@ countLines = Seq.length . docLines
 
 moveCoord :: Document -> Int -> Coord -> Coord
 moveCoord _ 0 c = c
-moveCoord Document{docLines} offset (Coord cline ccol) =
+moveCoord document offset coord =
   if offset > 0
-    then forward cline ccol offset
-    else backward cline ccol (-offset)
+    then forward offset
+    else backward (-offset)
   where
-    nLines = Seq.length docLines
-    forward line col 0 = Coord line col
-    forward line col n =
-      if n < nRest
-        then Coord line . (col +) . Text.lengthWord8 . ICU.brkPrefix . (!! n) $ rest
-        else if line + 1 < nLines
-          then forward (line + 1) 0 (n - nRest)
-          else Coord line . (+ col) . Text.lengthWord8 . ICU.brkPrefix . last $ rest
-      where
-        rest = ICU.breaks (ICU.breakCharacter ICU.Current) . Text.dropWord8 (fromIntegral col) . fromJust . Seq.lookup line $ docLines
-        nRest = Prelude.length rest
-    backward line col 0 = Coord line col
-    backward line col n =
-      if n <= nRest
-        then Coord line . (col -) . suffixLength . (!! (n - 1)) $ rest
-        else if line - 1 >= 0
-          then backward (line - 1) lastCol (n - nRest - 1)
-          else Coord 0 0
-      where
-        lastCol = Text.lengthWord8 . fst . fromJust . Text.unsnoc . fromJust . Seq.lookup (line - 1) $ docLines
-        suffixLength b = Text.lengthWord8 (ICU.brkBreak b) + Text.lengthWord8 (ICU.brkSuffix b)
-        rest = reverse . ICU.breaks (ICU.breakCharacter ICU.Current) . Text.takeWord8 (fromIntegral col) . fromJust . Seq.lookup line $ docLines
-        nRest = Prelude.length rest
+    forward n = indexSatDef coord (snd <$> breakWithCoord (ICU.breakCharacter ICU.Current) coord document) n
+    backward n = indexSatDef coord (snd <$> breakBackwardWithCoord (ICU.breakCharacter ICU.Current) coord document) (n - 1)
 
 fromText :: Text -> Document
 fromText = Document <$> toLines
@@ -113,3 +96,38 @@ combineLines a Seq.Empty = a
 combineLines x@(as Seq.:|> a) y@(b Seq.:<| bs)
   | "\n" `Text.isSuffixOf` a = x <> y
   | otherwise = as <> Seq.singleton (a <> b) <> bs
+
+breakWithCoord :: ICU.Breaker a -> Coord -> Document -> [(ICU.Break a, Coord)]
+breakWithCoord breaker (Coord line col) Document{docLines} =
+  restLine ++ restDoc
+  where
+    restLine =
+      fmap (\brk -> (brk, Coord line (col + Text.lengthWord8 (ICU.brkPrefix brk))))
+      . ICU.breaks breaker
+      . Text.dropWord8 (fromIntegral col)
+      . fromJust
+      . Seq.lookup line
+      $ docLines
+    restDoc = fold . Seq.mapWithIndex (\idx text -> breakLine (idx + line + 1) text). Seq.drop (line + 1) $ docLines
+    breakLine idx = fmap (\brk -> (brk, Coord idx (Text.lengthWord8 (ICU.brkPrefix brk)))) . ICU.breaks breaker
+
+breakBackwardWithCoord :: ICU.Breaker a -> Coord -> Document -> [(ICU.Break a, Coord)]
+breakBackwardWithCoord breaker (Coord line col) Document{docLines} =
+  restLine ++ restDoc
+  where
+    restLine =
+      reverse
+      . fmap (\brk -> (brk, Coord line (Text.lengthWord8 (ICU.brkPrefix brk))))
+      . ICU.breaks breaker
+      . Text.takeWord8 (fromIntegral col)
+      . fromJust
+      . Seq.lookup line
+      $ docLines
+    restDoc = fold . Seq.reverse . Seq.mapWithIndex (\idx text -> breakLine idx text). Seq.take line $ docLines
+    breakLine idx = reverse . fmap (\brk -> (brk, Coord idx (Text.lengthWord8 (ICU.brkPrefix brk)))) . ICU.breaks breaker
+
+indexSatDef :: a -> [a] -> Int -> a
+indexSatDef dflt [] _ = dflt
+indexSatDef _ [x] _ = x
+indexSatDef _ (x : _) 0 = x
+indexSatDef _ (_ : xs) n = indexSatDef undefined xs (n - 1)

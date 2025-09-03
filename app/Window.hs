@@ -207,10 +207,12 @@ instance Window DemoWindow where
         xStart <- if ccol == 0 then pure 0 else getMid <$> Raqm.indexToPosition rq (ccol - 1)
         xEnd <- if ccol == Text.lengthWord8 ln - 1 then pure (xStart + (faceIDSizePx (configFace dwConfig) `div` 2)) else getMid <$> Raqm.indexToPosition rq ccol
         drawCursor res dwCursor (y - descender - height) (y - descender) (50 + xStart) (50 + xEnd)
-      let charLen = Text.lengthWord8 . ICU.brkBreak . head . ICU.breaks (ICU.breakCharacter ICU.Current) . Text.dropWord8 (fromIntegral ccol) $ ln
+      let charLen = Text.lengthWord8 . ICU.brkBreak . (!! 0) . ICU.breaks (ICU.breakCharacter ICU.Current) . Text.dropWord8 (fromIntegral ccol) $ ln
       drawText dwWeaver res 5 y [(0, 100, configForeground dwConfig)] (Text.pack (show idx))
       let addCursorColorSpec = if idx == cln then ((ccol, ccol + charLen, configPrimaryCursorForeground dwConfig) :) else id
+      -- let rainbow = fmap (\(n, c) -> (n, n + 1, c)) . zip [0 ..] . cycle $ [ Color 0.93 0.94 0.96 1, Color 0.53 0.75 0.82 1, Color 0.37 0.51 0.67 1, Color 0.75 0.38 0.42 1, Color 0.86 0.53 0.44 1, Color 0.92 0.80 0.55 1, Color 0.64 0.75 0.55 1, Color 0.71 0.56 0.68 1 ]
       drawText dwWeaver res 50 y (addCursorColorSpec [(0, Text.lengthWord8 content, configForeground dwConfig)]) content
+      -- drawText dwWeaver res 50 y rainbow content
     -- drawText dwWeaver res 30 (height + descender) "file is filling the office."
     -- drawText dwWeaver res 30 (height * 2 + descender) "OPPO回应苹果起诉员工窃密：并未侵犯苹果公司商业秘密，相信公正的司法审理能够澄清事实。"
 

@@ -1,4 +1,4 @@
-{-# LANGUAGE RecordWildCards, DeriveAnyClass, OverloadedStrings #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 module Raqm
   ( Raqm
@@ -16,6 +16,7 @@ module Raqm
   , setText
   , setLanguage
   , setFreetypeFace
+  , addFontFeature
   , layout
   , getGlyphs
   , Glyph(..)
@@ -27,6 +28,7 @@ module Raqm
 
 import qualified Foreign.Ptr as C
 import qualified Foreign.C.Types as C
+import qualified Foreign.C.String as C
 import qualified Data.Text.Foreign as Text
 import Data.Word
 import Data.Text (Text)
@@ -85,6 +87,12 @@ foreign import ccall "raqm_set_freetype_face"
 
 setFreetypeFace :: Raqm -> FT_Face -> IO ()
 setFreetypeFace rq face = checkBool "setFreetypeFace" =<< setFreetypeFace_ rq face
+
+foreign import ccall "raqm_add_font_feature"
+  addFontFeature_ :: Raqm -> C.CString -> C.CInt -> IO Bool
+
+addFontFeature :: Raqm -> Text -> IO ()
+addFontFeature rq feature = checkBool "addFontFeature" =<< Text.withCString feature (\f -> addFontFeature_ rq f (-1))
 
 foreign import ccall "raqm_layout"
   layout_ :: Raqm -> IO Bool
