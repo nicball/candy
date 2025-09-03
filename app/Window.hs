@@ -23,15 +23,14 @@ import GL
   , withProgram
   , withSlot
   , writeArrayBuffer
-  , GLObject(deleteObject)
   , Resolution(..)
   , pixelQuadToNDC
   )
 import qualified GL
 import qualified Data.IntMap as IntMap
-import Data.IORef (IORef, modifyIORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, modifyIORef, newIORef, readIORef)
 import Weaver (drawText, withWeaver)
-import Config (Config(..), FaceID(..))
+import Config (Config(..), FaceID(..), Color(..))
 import Graphics.GL
 import Foreign.Ptr (nullPtr, plusPtr)
 import Foreign.C (withCAString)
@@ -40,15 +39,13 @@ import Control.Monad (forM_)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import qualified Data.Text.Foreign as Text
-import Weaver (Weaver, drawText, withWeaver, getLineHeight, getDescender, layoutTextCached)
+import Weaver (Weaver, getLineHeight, getDescender, layoutTextCached)
 import qualified Data.Text.ICU as ICU
-import qualified Data.Text.ICU.Break as ICUIO
 import qualified Graphics.UI.GLFW as GLFW
-import Unsafe.Coerce (unsafeCoerce)
 import Control.Monad (when)
 import qualified Raqm
-import qualified Foreign.Marshal.Array as C
-import Document
+import Document (Document, Coord(..))
+import qualified Document
 
 class Scroll a where
   scroll :: Double -> Double -> a -> IO ()
@@ -73,7 +70,7 @@ data DefaultWindowManager = DefaultWindowManager
   }
 
 data WindowInfo = forall w. Window w => WindowInfo
-  { wiWindow :: w
+  { _wiWindow :: w
   , wiNeedRedraw :: Bool
   }
 
@@ -169,7 +166,7 @@ withDemoWindow dwConfig action = do
   dwDocument <- Document.fromText <$> Text.readFile "./app/Weaver.hs"
   dwCursorPos <- newIORef (Coord 0 0)
   withWeaver dwConfig \dwWeaver -> do
-    withCursor \dwCursor -> do
+    withCursor dwConfig \dwCursor -> do
       action DemoWindow {..}
 
 instance Scroll DemoWindow where
@@ -177,15 +174,16 @@ instance Scroll DemoWindow where
 
 instance SendKey DemoWindow where
   sendKey key mods DemoWindow{..} = do
-    when (mods == GLFW.ModifierKeys False False False False False False) do
-      case key of
-        GLFW.Key'L -> modifyIORef dwCursorPos (Document.moveCoord dwDocument 1)
-        GLFW.Key'H -> modifyIORef dwCursorPos (Document.moveCoord dwDocument (-1))
-        _ -> pure ()
+    case key of
+      GLFW.Key'L -> modifyIORef dwCursorPos (Document.moveCoord dwDocument (scale 1))
+      GLFW.Key'H -> modifyIORef dwCursorPos (Document.moveCoord dwDocument (scale (-1)))
+      _ -> pure ()
+    where scale x = if GLFW.modifierKeysControl mods then x * 100 else x
 
 instance Window DemoWindow where
   drawWindow res DemoWindow{..} = do
-    glClearColor 0.2 0.2 0.2 1
+    let Color{..} = configBackground dwConfig in
+      glClearColor colorRed colorGreen colorBlue colorAlpha
     glClear GL_COLOR_BUFFER_BIT
     -- forM_ [16, 32, 64, 128] \s -> do
     --   withWeaver cfg { configFontSizePx = s, configForeground = (0, 0, 0) } \weaver -> do
@@ -199,18 +197,20 @@ instance Window DemoWindow where
         numLines = resVert res `divSat` height
         divSat a b = let (r, m) = divMod a b in if m /= 0 then r + 1 else r
     Coord cln ccol <- readIORef dwCursorPos
-    forM_ [ beginLine .. beginLine + numLines - 1 ] \idx -> do
+    forM_ [ beginLine, beginLine + 1 .. min (beginLine + numLines) (Document.countLines dwDocument - 1) ] \idx -> do
       let y = linePos idx
-      let ln = docGetLine idx dwDocument
+      let ln = Document.getLine idx dwDocument
       let content = Text.dropWhileEnd (== '\n') ln
       let getMid (_, x, _) = x
       when (idx == cln) do
         rq <- layoutTextCached (configFace dwConfig) content
         xStart <- if ccol == 0 then pure 0 else getMid <$> Raqm.indexToPosition rq (ccol - 1)
         xEnd <- if ccol == Text.lengthWord8 ln - 1 then pure (xStart + (faceIDSizePx (configFace dwConfig) `div` 2)) else getMid <$> Raqm.indexToPosition rq ccol
-        drawCursor res dwCursor y (50 + xStart) (50 + xEnd)
-      drawText dwWeaver res 5 y (Text.pack (show idx))
-      drawText dwWeaver res 50 y content
+        drawCursor res dwCursor (y - descender - height) (y - descender) (50 + xStart) (50 + xEnd)
+      let charLen = Text.lengthWord8 . ICU.brkBreak . head . ICU.breaks (ICU.breakCharacter ICU.Current) . Text.dropWord8 (fromIntegral ccol) $ ln
+      drawText dwWeaver res 5 y [(0, 100, configForeground dwConfig)] (Text.pack (show idx))
+      let addCursorColorSpec = if idx == cln then ((ccol, ccol + charLen, configPrimaryCursorForeground dwConfig) :) else id
+      drawText dwWeaver res 50 y (addCursorColorSpec [(0, Text.lengthWord8 content, configForeground dwConfig)]) content
     -- drawText dwWeaver res 30 (height + descender) "file is filling the office."
     -- drawText dwWeaver res 30 (height * 2 + descender) "OPPO回应苹果起诉员工窃密：并未侵犯苹果公司商业秘密，相信公正的司法审理能够澄清事实。"
 
@@ -220,8 +220,8 @@ data Cursor = Cursor
   , cursorVBO :: GL.Buffer
   }
 
-withCursor :: (Cursor -> IO a) -> IO a
-withCursor action =
+withCursor :: Config -> (Cursor -> IO a) -> IO a
+withCursor config action =
   withProgram vs Nothing fs \cursorProg -> do
     withObject \cursorVAO -> do
       withObject \cursorVBO -> do
@@ -238,26 +238,25 @@ withCursor action =
       , "  gl_Position = vec4(v_pos, 0, 1);"
       , "}"
       ]
-    fs = Just . BS.unlines $
-      [ "#version 330 core"
-      , "out vec4 color;"
-      , "void main() {"
-      , "  color = vec4(0.54, 0.75, 0.81, 1);"
-      , "}"
-      ]
+    fs =
+      let Color{..} = configPrimaryCursorBackground config
+      in Just . BS.unlines $
+        [ "#version 330 core"
+        , "out vec4 color;"
+        , "void main() {"
+        , "  color = vec4(" <> BS.pack (show colorRed) <> ", " <> BS.pack (show colorGreen) <> ", " <> BS.pack (show colorBlue) <> ", " <> BS.pack (show colorAlpha) <> ");"
+        , "}"
+        ]
 
-drawCursor :: Resolution -> Cursor -> Int -> Int -> Int -> IO ()
-drawCursor (Resolution w h) Cursor{..} y xStart xEnd = do
-  let
-    ndcY = scaleY y
-    ndcXStart = scaleX xStart
-    ndcXEnd = scaleX xEnd
-    scaleX p = -1 + (fromIntegral p + 0.5) * 2 / fromIntegral w
-    scaleY p = 1 - (fromIntegral p + 0.5) * 2 / fromIntegral h
+drawCursor :: Resolution -> Cursor -> Int -> Int -> Int -> Int -> IO ()
+drawCursor res Cursor{..} yStart yEnd xStart xEnd = do
   bindProgram cursorProg do
     withSlot vertexArraySlot cursorVAO do
       withSlot arrayBufferSlot cursorVBO do
-        forM_ [0 :: Int .. 4] \dy -> do
-          let ndcDy = fromIntegral dy * 2 / fromIntegral h
-          writeArrayBuffer [ ndcXStart, ndcY - ndcDy, ndcXEnd, ndcY - ndcDy ]
-          glDrawArrays GL_LINES 0 2
+        writeArrayBuffer . pixelQuadToNDC res $
+          ( (xStart, yStart)
+          , (xEnd, yStart)
+          , (xStart, yEnd)
+          , (xEnd, yEnd)
+          )
+        glDrawArrays GL_TRIANGLE_STRIP 0 4

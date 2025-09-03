@@ -5,8 +5,9 @@ module Document
   , empty
   , patch
   , extract
-  , docGetLine
+  , Document.getLine
   , Document.length
+  , countLines
   , moveCoord
   , fromText
   , toText
@@ -52,18 +53,21 @@ extract (Iv (Coord bline bcol) (Coord eline ecol)) Document{docLines}
     wholeLines = foldMap (fromJust . flip Seq.lookup docLines) [ bline, bline + 1 .. eline - 1 ]
     lastLine = Text.takeWord8 (fromIntegral ecol) . fromJust . Seq.lookup eline $ docLines
 
-docGetLine :: Int -> Document -> Text
-docGetLine n Document{docLines} = fromJust . Seq.lookup n $ docLines
+getLine :: Int -> Document -> Text
+getLine n Document{docLines} = fromJust . Seq.lookup n $ docLines
 
 length :: Document -> Int
 length = getSum . foldMap (Sum . Text.length) . docLines
 
+countLines :: Document -> Int
+countLines = Seq.length . docLines
+
 moveCoord :: Document -> Int -> Coord -> Coord
 moveCoord _ 0 c = c
-moveCoord Document{docLines} offset (Coord line col) =
+moveCoord Document{docLines} offset (Coord cline ccol) =
   if offset > 0
-    then forward line col offset
-    else backward line col (-offset)
+    then forward cline ccol offset
+    else backward cline ccol (-offset)
   where
     nLines = Seq.length docLines
     forward line col 0 = Coord line col
@@ -72,7 +76,7 @@ moveCoord Document{docLines} offset (Coord line col) =
         then Coord line . (col +) . Text.lengthWord8 . ICU.brkPrefix . (!! n) $ rest
         else if line + 1 < nLines
           then forward (line + 1) 0 (n - nRest)
-          else Coord line . Text.lengthWord8 . fromJust . Seq.lookup line $ docLines
+          else Coord line . (+ col) . Text.lengthWord8 . ICU.brkPrefix . last $ rest
       where
         rest = ICU.breaks (ICU.breakCharacter ICU.Current) . Text.dropWord8 (fromIntegral col) . fromJust . Seq.lookup line $ docLines
         nRest = Prelude.length rest

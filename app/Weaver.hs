@@ -30,7 +30,7 @@ import Control.Monad (when)
 
 import GL (withProgram, bindProgram, writeArrayBuffer, withSlot, withObject, texture2DSlot, arrayBufferSlot, vertexArraySlot, Resolution(..))
 import Atlas (withAtlas, Atlas (..), addGlyph)
-import Config (Config(..), FaceID(..))
+import Config (Config(..), FaceID(..), Color(..), colorToRGBA)
 import qualified Raqm
 import qualified GL
 
@@ -56,9 +56,6 @@ withWeaver config action = do
       glUniform1f texWidth (fromIntegral (atlasWidth weaverAtlas))
       texHeight <- C.withCAString "tex_height" (glGetUniformLocation weaverProgram)
       glUniform1f texHeight (fromIntegral (atlasHeight weaverAtlas))
-      penColor <- C.withCAString "pen_color" (glGetUniformLocation weaverProgram)
-      let (penColorR, penColorG, penColorB, penColorA) = configForeground config
-      glUniform4f penColor penColorR penColorG penColorB penColorA
       withObject \weaverVBO -> do
         withObject \weaverVAO -> do
           withSlot arrayBufferSlot weaverVBO do
@@ -66,7 +63,7 @@ withWeaver config action = do
               let
                 floatSize :: Num a => a
                 floatSize = fromIntegral (C.sizeOf (0 :: GLfloat))
-                stride = 6 * floatSize
+                stride = 10 * floatSize
               glVertexAttribPointer 0 2 GL_FLOAT GL_FALSE stride C.nullPtr
               glEnableVertexAttribArray 0
               glVertexAttribPointer 1 1 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (2 * floatSize))
@@ -75,6 +72,8 @@ withWeaver config action = do
               glEnableVertexAttribArray 2
               glVertexAttribPointer 3 2 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (4 * floatSize))
               glEnableVertexAttribArray 3
+              glVertexAttribPointer 4 4 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (6 * floatSize))
+              glEnableVertexAttribArray 4
           action Weaver {..}
 
 setResolution :: Resolution -> Weaver -> IO ()
@@ -96,17 +95,19 @@ getDescender :: Weaver -> IO Int
 getDescender Weaver{weaverFtFace = face} = do
   fromIntegral . (`div` 64) . smDescender . srMetrics <$> (C.peek . frSize =<< C.peek face)
 
-drawText :: Weaver -> Resolution -> Int -> Int -> Text.Text -> IO ()
-drawText weaver res originX originY text = do
+type ColorSpec = [(Int, Int, Color)]
+
+drawText :: Weaver -> Resolution -> Int -> Int -> ColorSpec -> Text.Text -> IO ()
+drawText weaver res originX originY colorspec text = do
   bindProgram (weaverProgram weaver) do
     setResolution res weaver
     withSlot texture2DSlot (atlasTexture (weaverAtlas weaver)) do
-      array <- fmap fromIntegral <$> genVertexArray
+      array <- genVertexArray
       glGenerateMipmap GL_TEXTURE_2D
       withSlot vertexArraySlot (weaverVAO weaver) do
         withSlot arrayBufferSlot (weaverVBO weaver) do
           writeArrayBuffer array
-          glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 6))
+          glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 10))
   where
     genVertexArray = do
       glyphs <- Raqm.getGlyphs =<< layoutTextCached (weaverFace weaver) text
@@ -120,8 +121,14 @@ drawText weaver res originX originY text = do
             xAdvance = fromIntegral . Raqm.gXAdvance $ glyph
             x = (penX `div` 64) + gLeftBearing + xOffset + originX
             y = -gTopBearing + gHeight - yOffset + originY
+            cluster = fromIntegral . Raqm.gCluster $ glyph
+            vertices = fmap fromIntegral [x, y, gWidth, gHeight, gAtlasX, gAtlasY] ++ findColor cluster colorspec
           in
-            pure (penX + xAdvance, [x, y, gWidth, gHeight, gAtlasX, gAtlasY] : result)
+            pure (penX + xAdvance, vertices : result)
+    findColor _ [] = undefined
+    findColor idx ((begin, end, color) : cs)
+      | begin <= idx && idx < end = colorToRGBA color
+      | otherwise = findColor idx cs
 
 {-# NOINLINE globalFtLib #-}
 globalFtLib :: FT_Library
