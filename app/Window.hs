@@ -46,6 +46,8 @@ import Control.Monad (when)
 import qualified Raqm
 import Document (Document, Coord(..))
 import qualified Document
+import Selection (Selection(..))
+import qualified Selection
 
 class Scroll a where
   scroll :: Double -> Double -> a -> IO ()
@@ -155,7 +157,7 @@ data DemoWindow = DemoWindow
   { dwScrollPos :: IORef Double
   , dwWeaver :: Weaver
   , dwDocument :: Document
-  , dwCursorPos :: IORef Coord
+  , dwSelection :: IORef Selection
   , dwConfig :: Config
   , dwCursor :: Cursor
   }
@@ -164,7 +166,7 @@ withDemoWindow :: Config -> (DemoWindow -> IO a) -> IO a
 withDemoWindow dwConfig action = do
   dwScrollPos <- newIORef 0
   dwDocument <- Document.fromText <$> Text.readFile "./app/Weaver.hs"
-  dwCursorPos <- newIORef (Coord 0 0)
+  dwSelection <- newIORef (Selection (Coord 0 0) (Coord 0 0))
   withWeaver dwConfig \dwWeaver -> do
     withCursor dwConfig \dwCursor -> do
       action DemoWindow {..}
@@ -175,10 +177,12 @@ instance Scroll DemoWindow where
 instance SendKey DemoWindow where
   sendKey key mods DemoWindow{..} = do
     case key of
-      GLFW.Key'L -> modifyIORef dwCursorPos (Document.moveCoord dwDocument (scale 1))
-      GLFW.Key'H -> modifyIORef dwCursorPos (Document.moveCoord dwDocument (scale (-1)))
+      GLFW.Key'H -> modifyIORef dwSelection (ext Selection.moveLeft dwDocument)
+      GLFW.Key'L -> modifyIORef dwSelection (ext Selection.moveRight dwDocument)
+      GLFW.Key'E -> modifyIORef dwSelection (ext Selection.selectToWordEnd dwDocument)
+      GLFW.Key'W -> modifyIORef dwSelection (ext Selection.selectToWordStart dwDocument)
       _ -> pure ()
-    where scale x = if GLFW.modifierKeysControl mods then x * 100 else x
+    where ext m = if GLFW.modifierKeysShift mods then Selection.extend m else m
 
 instance Window DemoWindow where
   drawWindow res DemoWindow{..} = do
@@ -196,22 +200,24 @@ instance Window DemoWindow where
     let linePos idx = height * (idx - beginLine + 1) + descender
         numLines = resVert res `divSat` height
         divSat a b = let (r, m) = divMod a b in if m /= 0 then r + 1 else r
-    Coord cln ccol <- readIORef dwCursorPos
+    Selection anchor mark <- readIORef dwSelection
     forM_ [ beginLine, beginLine + 1 .. min (beginLine + numLines) (Document.countLines dwDocument - 1) ] \idx -> do
       let y = linePos idx
       let ln = Document.getLine idx dwDocument
       let content = Text.dropWhileEnd (== '\n') ln
       let getMid (_, x, _) = x
-      when (idx == cln) do
-        rq <- layoutTextCached (configFace dwConfig) content
-        xStart <- if ccol == 0 then pure 0 else getMid <$> Raqm.indexToPosition rq (ccol - 1)
-        xEnd <- if ccol == Text.lengthWord8 ln - 1 then pure (xStart + (faceIDSizePx (configFace dwConfig) `div` 2)) else getMid <$> Raqm.indexToPosition rq ccol
-        drawCursor res dwCursor (y - descender - height) (y - descender) (50 + xStart) (50 + xEnd)
-      let charLen = Text.lengthWord8 . ICU.brkBreak . (!! 0) . ICU.breaks (ICU.breakCharacter ICU.Current) . Text.dropWord8 (fromIntegral ccol) $ ln
+      let cursors = [(coordLine anchor, coordColumn anchor), (coordLine mark, coordColumn mark)]
+      forM_ cursors \(cln, ccol) -> do
+        when (idx == cln) do
+          rq <- layoutTextCached (configFace dwConfig) content
+          xStart <- if ccol == 0 then pure 0 else getMid <$> Raqm.indexToPosition rq (ccol - 1)
+          xEnd <- if ccol == Text.lengthWord8 ln - 1 then pure (xStart + (faceIDSizePx (configFace dwConfig) `div` 2)) else getMid <$> Raqm.indexToPosition rq ccol
+          drawCursor res dwCursor (y - descender - height) (y - descender) (50 + xStart) (50 + xEnd)
+      let charLen ccol = Text.lengthWord8 . ICU.brkBreak . (!! 0) . ICU.breaks (ICU.breakCharacter ICU.Current) . Text.dropWord8 (fromIntegral ccol) $ ln
       drawText dwWeaver res 5 y [(0, 100, configForeground dwConfig)] (Text.pack (show idx))
-      let addCursorColorSpec = if idx == cln then ((ccol, ccol + charLen, configPrimaryCursorForeground dwConfig) :) else id
+      let colorSpec = fmap (\(_, ccol) -> (ccol, ccol + charLen ccol, configPrimaryCursorForeground dwConfig)) . filter (\(cln, _) -> idx == cln) $ cursors
       -- let rainbow = fmap (\(n, c) -> (n, n + 1, c)) . zip [0 ..] . cycle $ [ Color 0.93 0.94 0.96 1, Color 0.53 0.75 0.82 1, Color 0.37 0.51 0.67 1, Color 0.75 0.38 0.42 1, Color 0.86 0.53 0.44 1, Color 0.92 0.80 0.55 1, Color 0.64 0.75 0.55 1, Color 0.71 0.56 0.68 1 ]
-      drawText dwWeaver res 50 y (addCursorColorSpec [(0, Text.lengthWord8 content, configForeground dwConfig)]) content
+      drawText dwWeaver res 50 y (colorSpec ++ [(0, Text.lengthWord8 content, configForeground dwConfig)]) content
       -- drawText dwWeaver res 50 y rainbow content
     -- drawText dwWeaver res 30 (height + descender) "file is filling the office."
     -- drawText dwWeaver res 30 (height * 2 + descender) "OPPO回应苹果起诉员工窃密：并未侵犯苹果公司商业秘密，相信公正的司法审理能够澄清事实。"

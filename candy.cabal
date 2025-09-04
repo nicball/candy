@@ -72,7 +72,8 @@ executable candy
     Weaver,
     Raqm,
     Window,
-    Document
+    Document,
+    Selection
 
   extra-source-files:
     app/weaver.vert

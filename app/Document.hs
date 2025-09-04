@@ -8,11 +8,16 @@ module Document
   , Document.getLine
   , Document.length
   , countLines
+  , charLengthAt
+  , endOfDocument
   , moveCoord
   , fromText
   , toText
-  , breakWithCoord
-  , breakBackwardWithCoord
+  , breakAfterCoord
+  , breakBeforeCoord
+  , charBreaker
+  , wordBreaker
+  , countBreaks
   ) where
 
 import qualified Data.Text as Text
@@ -29,9 +34,9 @@ data Document = Document
   { docLines :: Seq Text
   }
 data Coord = Coord { coordLine :: Int, coordColumn :: Int }
-  deriving Show
+  deriving (Show, Eq, Ord)
 data Iv = Iv { ivBegin :: Coord, ivEnd :: Coord }
-  deriving Show
+  deriving (Show, Eq)
 -- data EndOfLine = Cr | Lf | CrLf
 
 empty :: Document
@@ -66,6 +71,15 @@ length = getSum . foldMap (Sum . Text.length) . docLines
 countLines :: Document -> Int
 countLines = Seq.length . docLines
 
+charLengthAt :: Document -> Coord -> Int
+charLengthAt = fmap (Text.lengthWord8 . ICU.brkBreak . fst . (!! 0)) . breakAfterCoord charBreaker
+
+endOfDocument :: Document -> Coord
+endOfDocument doc = Coord line col
+  where
+    line = countLines doc - 1
+    col = Text.lengthWord8 . ICU.brkPrefix . last . ICU.breaks charBreaker . fromJust . Seq.lookup line . docLines $ doc
+
 moveCoord :: Document -> Int -> Coord -> Coord
 moveCoord _ 0 c = c
 moveCoord document offset coord =
@@ -73,8 +87,8 @@ moveCoord document offset coord =
     then forward offset
     else backward (-offset)
   where
-    forward n = indexSatDef coord (snd <$> breakWithCoord (ICU.breakCharacter ICU.Current) coord document) n
-    backward n = indexSatDef coord (snd <$> breakBackwardWithCoord (ICU.breakCharacter ICU.Current) coord document) (n - 1)
+    forward n = indexSatDef coord (snd <$> breakAfterCoord charBreaker document coord) n
+    backward n = indexSatDef coord (snd <$> breakBeforeCoord charBreaker document coord) (n - 1)
 
 fromText :: Text -> Document
 fromText = Document <$> toLines
@@ -97,8 +111,8 @@ combineLines x@(as Seq.:|> a) y@(b Seq.:<| bs)
   | "\n" `Text.isSuffixOf` a = x <> y
   | otherwise = as <> Seq.singleton (a <> b) <> bs
 
-breakWithCoord :: ICU.Breaker a -> Coord -> Document -> [(ICU.Break a, Coord)]
-breakWithCoord breaker (Coord line col) Document{docLines} =
+breakAfterCoord :: ICU.Breaker a -> Document -> Coord -> [(ICU.Break a, Coord)]
+breakAfterCoord breaker Document{docLines} (Coord line col) =
   restLine ++ restDoc
   where
     restLine =
@@ -111,8 +125,8 @@ breakWithCoord breaker (Coord line col) Document{docLines} =
     restDoc = fold . Seq.mapWithIndex (\idx text -> breakLine (idx + line + 1) text). Seq.drop (line + 1) $ docLines
     breakLine idx = fmap (\brk -> (brk, Coord idx (Text.lengthWord8 (ICU.brkPrefix brk)))) . ICU.breaks breaker
 
-breakBackwardWithCoord :: ICU.Breaker a -> Coord -> Document -> [(ICU.Break a, Coord)]
-breakBackwardWithCoord breaker (Coord line col) Document{docLines} =
+breakBeforeCoord :: ICU.Breaker a -> Document -> Coord -> [(ICU.Break a, Coord)]
+breakBeforeCoord breaker Document{docLines} (Coord line col) =
   restLine ++ restDoc
   where
     restLine =
@@ -131,3 +145,12 @@ indexSatDef dflt [] _ = dflt
 indexSatDef _ [x] _ = x
 indexSatDef _ (x : _) 0 = x
 indexSatDef _ (_ : xs) n = indexSatDef undefined xs (n - 1)
+
+charBreaker :: ICU.Breaker ()
+charBreaker = ICU.breakCharacter ICU.Current
+
+wordBreaker :: ICU.Breaker ICU.Word
+wordBreaker = ICU.breakWord ICU.Current
+
+countBreaks :: ICU.Breaker a -> Text -> Int
+countBreaks breaker = Prelude.length . ICU.breaks breaker
