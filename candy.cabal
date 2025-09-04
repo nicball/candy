@@ -94,7 +94,8 @@ executable candy
     containers,
     lrucache,
     file-embed,
-    text-icu
+    text-icu,
+    string-interpolate
 
   pkgconfig-depends:
     raqm
@@ -104,4 +105,4 @@ executable candy
 
   -- Base language which the package is written in.
   default-language: GHC2021
-  default-extensions: BlockArguments, LambdaCase, OverloadedStrings, RecordWildCards
+  default-extensions: BlockArguments, LambdaCase, OverloadedStrings, RecordWildCards, ImportQualifiedPost

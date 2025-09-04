@@ -1,3 +1,5 @@
+{-# LANGUAGE TemplateHaskell, QuasiQuotes #-}
+
 module Window
   ( Window(..)
   , WindowID
@@ -13,41 +15,29 @@ module Window
   , flush
   ) where
 
-import GL
-  ( arrayBufferSlot
-  , bindProgram
-  , renderToTexture
-  , texture2DSlot
-  , vertexArraySlot
-  , withObject
-  , withProgram
-  , withSlot
-  , writeArrayBuffer
-  , Resolution(..)
-  , pixelQuadToNDC
-  )
-import qualified GL
-import qualified Data.IntMap as IntMap
-import Data.IORef (IORef, modifyIORef, newIORef, readIORef)
-import Weaver (drawText, withWeaver)
-import Config (Config(..), FaceID(..), Color(..))
-import Graphics.GL
-import Foreign.Ptr (nullPtr, plusPtr)
-import Foreign.C (withCAString)
-import qualified Data.ByteString.Char8 as BS
 import Control.Monad (forM_)
-import qualified Data.Text as Text
-import qualified Data.Text.IO as Text
-import qualified Data.Text.Foreign as Text
-import Weaver (Weaver, getLineHeight, getDescender, layoutTextCached)
-import qualified Data.Text.ICU as ICU
-import qualified Graphics.UI.GLFW as GLFW
 import Control.Monad (when)
-import qualified Raqm
+import Data.IntMap qualified as IntMap
+import Data.IORef (IORef, modifyIORef, newIORef, readIORef)
+import Data.String.Interpolate (__i)
+import Data.Text.Foreign qualified as Text
+import Data.Text.ICU qualified as ICU
+import Data.Text.IO qualified as Text
+import Data.Text qualified as Text
+import Foreign.C (withCAString)
+import Foreign.Ptr (nullPtr, plusPtr)
+import Graphics.GL
+import Graphics.UI.GLFW qualified as GLFW
+
+import Config (Config(..), FaceID(..), Color(..))
 import Document (Document, Coord(..))
-import qualified Document
+import Document qualified
+import GL (arrayBufferSlot, bindProgram, renderToTexture, texture2DSlot, vertexArraySlot, withObject, withProgram, withSlot, writeArrayBuffer, Resolution(..), pixelQuadToNDC)
+import GL qualified
+import Raqm qualified
+import Selection qualified
 import Selection (Selection(..))
-import qualified Selection
+import Weaver (Weaver, getLineHeight, getDescender, layoutTextCached, drawText, withWeaver)
 
 class Scroll a where
   scroll :: Double -> Double -> a -> IO ()
@@ -90,25 +80,27 @@ withDefaultWindowManager action =
             glEnableVertexAttribArray 1
         action DefaultWindowManager {..}
   where
-    dtVs = Just . BS.unlines $
-      [ "#version 330 core"
-      , "layout (location = 0) in vec2 v_pos;"
-      , "layout (location = 1) in vec2 v_tex_coord;"
-      , "out vec2 f_tex_coord;"
-      , "void main() {"
-      , "  gl_Position = vec4(v_pos, 0, 1);"
-      , "  f_tex_coord = v_tex_coord;"
-      , "}"
-      ]
-    dtFs = Just . BS.unlines $
-      [ "#version 330 core"
-      , "in vec2 f_tex_coord;"
-      , "uniform sampler2D tex;"
-      , "out vec4 color;"
-      , "void main() {"
-      , "  color = texture(tex, f_tex_coord);"
-      , "}"
-      ]
+    dtVs = Just
+      [__i|
+        \#version 330 core
+        layout (location = 0) in vec2 v_pos;
+        layout (location = 1) in vec2 v_tex_coord;
+        out vec2 f_tex_coord;
+        void main() {
+          gl_Position = vec4(v_pos, 0, 1);
+          f_tex_coord = v_tex_coord;
+        }
+      |]
+    dtFs = Just
+      [__i|
+        \#version 330 core
+        in vec2 f_tex_coord;
+        uniform sampler2D tex;
+        out vec4 color;
+        void main() {
+          color = texture(tex, f_tex_coord);
+        }
+      |]
 
 instance Scroll DefaultWindowManager where
   scroll x y dwm = readIORef (dwmWindows dwm) >>= mapM_ (\case WindowInfo w _ -> scroll x y w) . IntMap.elems
@@ -239,22 +231,24 @@ withCursor config action =
             glEnableVertexAttribArray 0
         action Cursor {..}
   where
-    vs = Just . BS.unlines $
-      [ "#version 330 core"
-      , "layout (location = 0) in vec2 v_pos;"
-      , "void main() {"
-      , "  gl_Position = vec4(v_pos, 0, 1);"
-      , "}"
-      ]
+    vs = Just
+      [__i|
+        \#version 330 core
+        layout (location = 0) in vec2 v_pos;
+        void main() {
+          gl_Position = vec4(v_pos, 0, 1);
+        }
+      |]
     fs =
       let Color{..} = configPrimaryCursorBackground config
-      in Just . BS.unlines $
-        [ "#version 330 core"
-        , "out vec4 color;"
-        , "void main() {"
-        , "  color = vec4(" <> BS.pack (show colorRed) <> ", " <> BS.pack (show colorGreen) <> ", " <> BS.pack (show colorBlue) <> ", " <> BS.pack (show colorAlpha) <> ");"
-        , "}"
-        ]
+      in Just
+        [__i|
+          \#version 330 core
+          out vec4 color;
+          void main() {
+            color = vec4(#{colorRed}, #{colorGreen}, #{colorBlue}, #{colorAlpha});
+          }
+        |]
 
 drawCursor :: Resolution -> Cursor -> Int -> Int -> Int -> Int -> IO ()
 drawCursor res Cursor{..} yStart yEnd xStart xEnd = do

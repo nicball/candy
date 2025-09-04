@@ -10,11 +10,11 @@ module Atlas
  , addGlyph
  ) where
 
-import Graphics.GL
-import qualified Data.Cache.LRU.IO as LRU
-import qualified Foreign as C
 import Control.Concurrent.MVar (MVar, newMVar, modifyMVar)
 import Control.Exception (bracket)
+import Data.Cache.LRU.IO qualified as LRU
+import Foreign qualified as C
+import Graphics.GL
 
 import GL (Texture, GLObject(..), texture2DSlot, withSlot)
 

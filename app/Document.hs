@@ -20,15 +20,15 @@ module Document
   , countBreaks
   ) where
 
-import qualified Data.Text as Text
-import qualified Data.Text.Foreign as Text
-import Data.Text (Text)
-import qualified Data.Sequence as Seq
-import Data.Sequence (Seq)
-import Data.Maybe (fromJust)
 import Data.Foldable (fold)
+import Data.Maybe (fromJust)
 import Data.Monoid (Sum(..))
-import qualified Data.Text.ICU as ICU
+import Data.Sequence qualified as Seq
+import Data.Sequence (Seq)
+import Data.Text.Foreign qualified as Text
+import Data.Text.ICU qualified as ICU
+import Data.Text qualified as Text
+import Data.Text (Text)
 
 data Document = Document
   { docLines :: Seq Text

@@ -2,21 +2,14 @@
 
 module Main (main) where
 
-import qualified Graphics.UI.GLFW as GLFW
+import Graphics.UI.GLFW qualified as GLFW
 import Graphics.GL
 import Control.Monad (unless, when)
 import Data.Function (fix)
 
 import GL (withGLFW, withWindow, getSlot, setSlot, viewportSlot, Viewport(..), Resolution(..))
 import Config (Config(..), FaceID(..), Color(..))
-import Window
-  ( flush
-  , withDefaultWindowManager
-  , withDemoWindow
-  , WindowManager(registerWindow)
-  , scroll
-  , sendKey
-  )
+import Window (flush, withDefaultWindowManager, withDemoWindow, WindowManager(registerWindow), scroll, sendKey)
 
 config :: Config
 config = Config

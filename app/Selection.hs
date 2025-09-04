@@ -1,5 +1,3 @@
-{-# LANGUAGE MultiWayIf #-}
-
 module Selection
   ( Selection(..)
   , alternate
@@ -14,12 +12,13 @@ module Selection
   , selectToWordStart
   ) where
 
-import Document
-import qualified Data.Text as Text
-import qualified Data.Text.Foreign as Text
-import qualified Data.Text.ICU as ICU
-import qualified Data.Char as Char
+import Data.Char qualified as Char
 import Data.Maybe (listToMaybe)
+import Data.Text.Foreign qualified as Text
+import Data.Text.ICU qualified as ICU
+import Data.Text qualified as Text
+
+import Document
 
 data Selection = Selection { selAnchor :: Coord, selMark :: Coord }
 

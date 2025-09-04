@@ -26,16 +26,16 @@ module Raqm
 
 #include <raqm.h>
 
-import qualified Foreign.Ptr as C
-import qualified Foreign.C.Types as C
-import qualified Foreign.C.String as C
-import qualified Data.Text.Foreign as Text
-import Data.Word
-import Data.Text (Text)
 import Control.Exception (Exception, throwIO, finally)
-import FreeType (FT_Face)
+import Data.Text.Foreign qualified as Text
+import Data.Text (Text)
+import Data.Word
+import Foreign.C.String qualified as C
+import Foreign.C.Types qualified as C
 import Foreign.Marshal (alloca, with, peekArray)
+import Foreign.Ptr qualified as C
 import Foreign.Storable (Storable, sizeOf, alignment, peek, poke, peekByteOff, pokeByteOff)
+import FreeType (FT_Face)
 
 newtype Raqm = Raqm (C.Ptr Raqm_)
 data Raqm_

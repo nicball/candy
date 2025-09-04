@@ -35,16 +35,16 @@ module GL
   , pixelQuadToNDC
   ) where
 
-import Graphics.GL
-import qualified Graphics.UI.GLFW as GLFW
-import qualified Data.List.NonEmpty as NonEmpty
 import Control.Exception (Exception, throwIO, finally, assert)
-import qualified Foreign.Marshal as C
-import qualified Foreign.Storable as C
-import qualified Foreign.Ptr as C
-import qualified Data.ByteString as BS
 import Control.Monad (when, unless, void)
-import qualified Data.Text as Text
+import Data.ByteString qualified as BS
+import Data.List.NonEmpty qualified as NonEmpty
+import Data.Text qualified as Text
+import Foreign.Marshal qualified as C
+import Foreign.Ptr qualified as C
+import Foreign.Storable qualified as C
+import Graphics.GL
+import Graphics.UI.GLFW qualified as GLFW
 
 data GLException = GLException Text.Text (NonEmpty.NonEmpty GLenum)
   deriving Show

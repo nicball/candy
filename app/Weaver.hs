@@ -22,26 +22,25 @@ module Weaver
   , layoutTextCached
   ) where
 
+import Control.Monad (forM, foldM, when)
+import Data.ByteString qualified as BS
+import Data.Cache.LRU.IO qualified as LRU
 import Data.FileEmbed (embedFileRelative)
-import Graphics.GL
+import Data.Text.Foreign qualified as Text
+import Data.Text qualified as Text
+import Foreign.C.String qualified as C
+import Foreign.Marshal.Array qualified as C
+import Foreign.Ptr qualified as C
+import Foreign.Storable qualified as C
 import FreeType
-import qualified Foreign.Storable as C
-import qualified Foreign.C.String as C
-import qualified Foreign.Ptr as C
-import qualified Foreign.Marshal.Array as C
-import qualified Data.ByteString as BS
-import Control.Monad (forM, foldM)
-import qualified Data.Text as Text
-import qualified Data.Text.Foreign as Text
+import Graphics.GL
 import System.IO.Unsafe (unsafePerformIO)
-import qualified Data.Cache.LRU.IO as LRU
-import Control.Monad (when)
 
 import GL (withProgram, bindProgram, writeArrayBuffer, withSlot, withObject, texture2DSlot, arrayBufferSlot, vertexArraySlot, Resolution(..))
 import Atlas (withAtlas, Atlas (..), addGlyph)
 import Config (Config(..), FaceID(..), Color(..), colorToRGBA)
-import qualified Raqm
-import qualified GL
+import Raqm qualified
+import GL qualified
 
 data Weaver = Weaver
   { weaverProgram :: GLuint
