@@ -3,8 +3,7 @@ module Selection
   , alternate
   , selMin
   , selMax
-  , selToIv
-  , ivToSel
+  , selLines
   , extend
   , moveLeft
   , moveRight
@@ -13,14 +12,18 @@ module Selection
   ) where
 
 import Data.Char qualified as Char
+import Data.Functor ((<&>))
 import Data.Maybe (listToMaybe)
 import Data.Text.Foreign qualified as Text
 import Data.Text.ICU qualified as ICU
 import Data.Text qualified as Text
+import Data.Text (Text)
 
-import Document
+import Document (breakAfterCoord, charBreaker, countBreaks, moveCoord, wordBreaker, Coord(..), Document)
+import Document qualified
 
 data Selection = Selection { selAnchor :: Coord, selMark :: Coord }
+  deriving Show
 
 alternate :: Selection -> Selection
 alternate (Selection a b) = Selection b a
@@ -31,6 +34,7 @@ selMin (Selection a b) = min a b
 selMax :: Selection -> Coord
 selMax (Selection a b) = max a b
 
+{-
 selToIv :: Document -> Selection -> Iv
 selToIv doc sel = Iv (selMin sel) end
   where
@@ -45,8 +49,19 @@ ivToSel doc Iv{..} = Selection ivBegin end
   where
     Coord line col = ivEnd
     end = if line == countLines doc - 1 && col == Text.lengthWord8 (Document.getLine line doc)
-      then snd . last . breakBeforeCoord charBreaker doc $ ivEnd
+      then snd . (!! 0) . breakBeforeCoord charBreaker doc $ ivEnd
       else moveCoord doc (-1) ivEnd
+-}
+
+selLines :: Document -> Selection -> [(Int, Int, Int)]
+selLines _ (Selection (Coord aln acol) (Coord mln mcol)) | aln == mln = [(aln, min acol mcol, max acol mcol)]
+selLines doc sel = firstRange : mid ++ lastRange
+  where
+    (Coord bln bcol, Coord eln ecol) = (selMin sel, selMax sel)
+    firstRange = (bln, bcol, (lastCharOffset . Document.getLine bln $ doc))
+    lastRange = if ecol == 0 then [] else [(eln, 0, ecol)]
+    mid = [bln + 1, bln + 2 .. eln - 1] <&> \ln ->
+      (ln, 0, lastCharOffset . Document.getLine ln $ doc)
 
 type Movement = Document -> Selection -> Selection
 
@@ -60,26 +75,6 @@ moveRight doc sel = Selection c c
 moveLeft :: Movement
 moveLeft doc sel = Selection c c  
   where c = moveCoord doc (-1) (selMark sel)
-
-{-
-aaa---n---aaa--e
-^ %
- ^%
-   ^ %
-   ^ %
-    ^%
-       ^    %
-       ^    %
-       ^    %
-       ^    %
-        ^   %
-          ^ %
-          ^ %
-           ^%
-             ^%
-             ^%
-              %
--}
 
 selectToWordEnd :: Movement
 selectToWordEnd doc Selection{selMark = curr} =
@@ -98,9 +93,7 @@ selectToWordEnd doc Selection{selMark = curr} =
       | ICU.brkBreak (fst x) == "\n" = findMark (y : xs)
       | otherwise = x
     findMark [] = undefined
-    endCoord (brk, Coord line col) = Coord line (col + offset)
-      where
-        offset = Text.lengthWord8 . ICU.brkPrefix . last . ICU.breaks charBreaker . ICU.brkBreak $ brk
+    endCoord (brk, Coord line col) = Coord line (col + lastCharOffset (ICU.brkBreak brk))
 
 selectToWordStart :: Movement
 selectToWordStart doc Selection{selMark = curr} =
@@ -118,6 +111,7 @@ selectToWordStart doc Selection{selMark = curr} =
       | isSpace (ICU.brkBreak (fst y)) = y
       | otherwise = x
     findMark [] = undefined
-    endCoord (brk, Coord line col) = Coord line (col + offset)
-      where
-        offset = Text.lengthWord8 . ICU.brkPrefix . last . ICU.breaks charBreaker . ICU.brkBreak $ brk
+    endCoord (brk, Coord line col) = Coord line (col + lastCharOffset (ICU.brkBreak brk))
+
+lastCharOffset :: Text -> Int
+lastCharOffset = Text.lengthWord8 . ICU.brkPrefix . last . ICU.breaks charBreaker

@@ -1,6 +1,5 @@
-{ mkDerivation, base, bytestring, containers, file-embed, freetype2
-, gl, GLFW-b, lib, lrucache, libraqm, string-interpolate, text
-, text-icu
+{ mkDerivation, base, bytestring, containers, freetype2, gl, GLFW-b
+, lib, lrucache, libraqm, string-interpolate, text, text-icu
 }:
 mkDerivation {
   pname = "candy";
@@ -9,7 +8,7 @@ mkDerivation {
   isLibrary = false;
   isExecutable = true;
   executableHaskellDepends = [
-    base bytestring containers file-embed freetype2 gl GLFW-b lrucache
+    base bytestring containers freetype2 gl GLFW-b lrucache
     string-interpolate text text-icu
   ];
   executablePkgconfigDepends = [ libraqm ];

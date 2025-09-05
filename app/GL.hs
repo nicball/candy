@@ -1,6 +1,8 @@
 {-# LANGUAGE DerivingStrategies
            , DeriveAnyClass
            , FunctionalDependencies
+           , TemplateHaskell
+           , QuasiQuotes
            #-}
 
 module GL
@@ -33,18 +35,26 @@ module GL
   , renderToTexture
   , Resolution(..)
   , pixelQuadToNDC
+  , QuadRenderer
+  , withQuadRenderer
+  , drawQuadColor
+  , drawQuadTexture
   ) where
 
 import Control.Exception (Exception, throwIO, finally, assert)
 import Control.Monad (when, unless, void)
 import Data.ByteString qualified as BS
 import Data.List.NonEmpty qualified as NonEmpty
+import Data.String.Interpolate (__i)
 import Data.Text qualified as Text
+import Foreign.C qualified as C
 import Foreign.Marshal qualified as C
 import Foreign.Ptr qualified as C
 import Foreign.Storable qualified as C
 import Graphics.GL
 import Graphics.UI.GLFW qualified as GLFW
+
+import Config
 
 data GLException = GLException Text.Text (NonEmpty.NonEmpty GLenum)
   deriving Show
@@ -282,3 +292,87 @@ pixelQuadToNDC (Resolution w h) (tl, tr, bl, br) =
       [ -1 + (fromIntegral x + dx)      * 2 / fromIntegral w
       ,  1 + (-fromIntegral y - 1 + dy) * 2 / fromIntegral h
       ]
+
+data QuadRenderer = QuadRenderer
+  { quadProg :: GLuint
+  , quadVAO :: GL.VertexArray
+  , quadVBO :: GL.Buffer
+  }
+
+withQuadRenderer ::(QuadRenderer -> IO a) -> IO a
+withQuadRenderer action =
+  withProgram vs Nothing fs \quadProg -> do
+    withObject \quadVAO -> do
+      withObject \quadVBO -> do
+        withSlot arrayBufferSlot quadVBO do
+          withSlot vertexArraySlot quadVAO do
+            glVertexAttribPointer 0 2 GL_FLOAT GL_FALSE 8 C.nullPtr
+            glEnableVertexAttribArray 0
+            glVertexAttribPointer 1 2 GL_FLOAT GL_FALSE 8 (C.plusPtr C.nullPtr 32)
+            glEnableVertexAttribArray 1
+        action QuadRenderer {..}
+  where
+    vs = Just
+      [__i|
+        \#version 330 core
+        layout (location = 0) in vec2 v_pos;
+        layout (location = 1) in vec2 v_tpos;
+        out vec2 f_tpos;
+        void main() {
+          gl_Position = vec4(v_pos, 0, 1);
+          f_tpos = v_tpos;
+        }
+      |]
+    fs = Just
+      [__i|
+        \#version 330 core
+        uniform vec4 f_color;
+        uniform sampler2D tex;
+        uniform bool use_texture;
+        in vec2 f_tpos;
+        out vec4 color;
+        void main() {
+          if (use_texture)
+            color = texture(tex, f_tpos);
+          else
+            color = f_color;
+        }
+      |]
+
+drawQuadColor :: QuadRenderer -> Resolution -> Color -> Int -> Int -> Int -> Int -> IO ()
+drawQuadColor QuadRenderer{..} res color yStart yEnd xStart xEnd = do
+  bindProgram quadProg do
+    withSlot vertexArraySlot quadVAO do
+      withSlot arrayBufferSlot quadVBO do
+        writeArrayBuffer $
+          pixelQuadToNDC res
+            ( (xStart, yStart)
+            , (xEnd, yStart)
+            , (xStart, yEnd)
+            , (xEnd, yEnd)
+            )
+          ++
+          [ 0, 1, 1, 1, 0, 0, 1, 0 ]
+        uColor <- C.withCAString "f_color" (glGetUniformLocation quadProg)
+        let Color{..} = color in
+          glUniform4f uColor colorRed colorGreen colorBlue colorAlpha
+        glDrawArrays GL_TRIANGLE_STRIP 0 4
+
+drawQuadTexture :: QuadRenderer -> Resolution -> Texture -> Int -> Int -> Int -> Int -> IO ()
+drawQuadTexture QuadRenderer{..} res texture yStart yEnd xStart xEnd = do
+  bindProgram quadProg do
+    withSlot vertexArraySlot quadVAO do
+      withSlot arrayBufferSlot quadVBO do
+        writeArrayBuffer $
+          pixelQuadToNDC res
+            ( (xStart, yStart)
+            , (xEnd, yStart)
+            , (xStart, yEnd)
+            , (xEnd, yEnd)
+            )
+          ++
+          [ 0, 1, 1, 1, 0, 0, 1, 0 ]
+        uUseTexture <- C.withCAString "use_texture" (glGetUniformLocation quadProg)
+        glUniform1i uUseTexture 1
+        withSlot texture2DSlot texture do
+          glDrawArrays GL_TRIANGLE_STRIP 0 4

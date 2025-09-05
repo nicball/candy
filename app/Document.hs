@@ -33,11 +33,18 @@ import Data.Text (Text)
 data Document = Document
   { docLines :: Seq Text
   }
+
 data Coord = Coord { coordLine :: Int, coordColumn :: Int }
   deriving (Show, Eq, Ord)
+
 data Iv = Iv { ivBegin :: Coord, ivEnd :: Coord }
   deriving (Show, Eq)
 -- data EndOfLine = Cr | Lf | CrLf
+
+{-
+subIv :: Iv -> Iv -> Bool
+subIv (Iv a b) (Iv c d) = c <= a && b <= d
+-}
 
 empty :: Document
 empty = Document . Seq.singleton $ ""

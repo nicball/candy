@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass
            , DerivingStrategies
            , TemplateHaskell
+           , QuasiQuotes
            #-}
 
 {-
@@ -25,7 +26,7 @@ module Weaver
 import Control.Monad (forM, foldM, when)
 import Data.ByteString qualified as BS
 import Data.Cache.LRU.IO qualified as LRU
-import Data.FileEmbed (embedFileRelative)
+import Data.String.Interpolate (__i)
 import Data.Text.Foreign qualified as Text
 import Data.Text qualified as Text
 import Foreign.C.String qualified as C
@@ -193,13 +194,103 @@ globalBboxSize fontSizePx face = do
     scale upem x = ceiling (fromIntegral x / fromIntegral upem * fromIntegral fontSizePx :: Double)
 
 vertexShaderSource :: BS.ByteString
-vertexShaderSource = $(embedFileRelative "./app/weaver.vert")
+vertexShaderSource =
+  [__i|
+    \#version 330 core
+
+    layout (location = 0) in vec2 v_pos;
+    layout (location = 1) in float v_width;
+    layout (location = 2) in float v_height;
+    layout (location = 3) in vec2 v_tex_coord;
+    layout (location = 4) in vec4 v_color;
+
+    out vec2 g_tex_coord;
+    out float g_width;
+    out float g_height;
+    out vec4 g_color;
+
+    uniform float hori_res;
+    uniform float vert_res;
+
+    void main() {
+      gl_Position = vec4(v_pos.x * 2 / hori_res - 1, -(v_pos.y + 1) * 2 / vert_res + 1, 0, 1);
+      g_tex_coord = v_tex_coord;
+      g_width = v_width;
+      g_height = v_height;
+      g_color = v_color;
+    }
+  |]
 
 geometryShaderSource :: BS.ByteString
-geometryShaderSource = $(embedFileRelative "./app/weaver.geom")
+geometryShaderSource =
+  [__i|
+    \#version 330 core
+
+    layout (points) in;
+    layout (triangle_strip, max_vertices = 4) out;
+
+    in vec2 g_tex_coord[];
+    in float g_width[];
+    in float g_height[];
+    in vec4 g_color[];
+
+    uniform float hori_res;
+    uniform float vert_res;
+    uniform float tex_width;
+    uniform float tex_height;
+
+    out vec2 f_tex_coord;
+    out vec4 f_color;
+
+    void main() {
+      float vw = g_width[0] * 2 / hori_res;
+      float vh = g_height[0] * 2 / vert_res;
+      float tw = g_width[0] / tex_width;
+      float th = g_height[0] / tex_height;
+      vec4 pos = gl_in[0].gl_Position;
+      vec2 tpos = g_tex_coord[0].xy / vec2(tex_width, tex_height);
+
+      gl_Position = pos;
+      f_tex_coord = tpos;
+      f_color = g_color[0];
+      EmitVertex();
+
+      gl_Position = pos + vec4(vw, 0, 0, 0);
+      f_tex_coord = tpos + vec2(tw, 0);
+      f_color = g_color[0];
+      EmitVertex();
+
+      gl_Position = pos + vec4(0, vh, 0, 0);
+      f_tex_coord = tpos + vec2(0, th);
+      f_color = g_color[0];
+      EmitVertex();
+
+      gl_Position = pos + vec4(vw, vh, 0, 0);
+      f_tex_coord = tpos + vec2(tw, th);
+      f_color = g_color[0];
+      EmitVertex();
+
+      EndPrimitive();
+    }
+  |]
 
 fragmentShaderSource :: BS.ByteString
-fragmentShaderSource = $(embedFileRelative "./app/weaver.frag")
+fragmentShaderSource =
+  [__i|
+    \#version 330 core
+
+    in vec2 f_tex_coord;
+    in vec4 f_color;
+
+    uniform sampler2D atlas;
+
+    out vec4 color;
+
+    void main() {
+      float font_grey = texture(atlas, f_tex_coord).r;
+      color = vec4(f_color.rgb, font_grey * f_color.a);
+    }
+  |]
 
 data RenderedGlyph = RenderedGlyph
   { gAtlasX :: Int

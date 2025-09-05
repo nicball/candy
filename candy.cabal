@@ -75,11 +75,6 @@ executable candy
     Document,
     Selection
 
-  extra-source-files:
-    app/weaver.vert
-    app/weaver.geom
-    app/weaver.frag
-
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:
 
@@ -93,7 +88,6 @@ executable candy
     GLFW-b,
     containers,
     lrucache,
-    file-embed,
     text-icu,
     string-interpolate
 

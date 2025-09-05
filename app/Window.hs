@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, QuasiQuotes #-}
+{-# LANGUAGE MultiWayIf #-}
 
 module Window
   ( Window(..)
@@ -16,24 +16,18 @@ module Window
   ) where
 
 import Control.Monad (forM_)
-import Control.Monad (when)
 import Data.IntMap qualified as IntMap
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef)
-import Data.String.Interpolate (__i)
 import Data.Text.Foreign qualified as Text
-import Data.Text.ICU qualified as ICU
 import Data.Text.IO qualified as Text
 import Data.Text qualified as Text
-import Foreign.C (withCAString)
-import Foreign.Ptr (nullPtr, plusPtr)
 import Graphics.GL
 import Graphics.UI.GLFW qualified as GLFW
 
-import Config (Config(..), FaceID(..), Color(..))
+import Config (Config(..), Color(..))
 import Document (Document, Coord(..))
 import Document qualified
-import GL (arrayBufferSlot, bindProgram, renderToTexture, texture2DSlot, vertexArraySlot, withObject, withProgram, withSlot, writeArrayBuffer, Resolution(..), pixelQuadToNDC)
-import GL qualified
+import GL (drawQuadColor, drawQuadTexture, renderToTexture, withQuadRenderer, QuadRenderer, Resolution(..))
 import Raqm qualified
 import Selection qualified
 import Selection (Selection(..))
@@ -56,9 +50,7 @@ class (Scroll a, SendKey a) => WindowManager a where
 
 data DefaultWindowManager = DefaultWindowManager
   { dwmWindows :: IORef (IntMap.IntMap WindowInfo)
-  , dwmProg :: GLuint
-  , dwmVAO :: GL.VertexArray
-  , dwmVBO :: GL.Buffer
+  , dwmQuadRenderer :: QuadRenderer
   }
 
 data WindowInfo = forall w. Window w => WindowInfo
@@ -67,40 +59,10 @@ data WindowInfo = forall w. Window w => WindowInfo
   }
 
 withDefaultWindowManager :: (DefaultWindowManager -> IO a) -> IO a
-withDefaultWindowManager action =
-  withProgram dtVs Nothing dtFs \dwmProg -> do
-    dwmWindows <- newIORef IntMap.empty
-    withObject \dwmVAO -> do
-      withObject \dwmVBO -> do
-        withSlot arrayBufferSlot dwmVBO do
-          withSlot vertexArraySlot dwmVAO do
-            glVertexAttribPointer 0 2 GL_FLOAT GL_FALSE 8 nullPtr
-            glEnableVertexAttribArray 0
-            glVertexAttribPointer 1 2 GL_FLOAT GL_FALSE 8 (plusPtr nullPtr 32)
-            glEnableVertexAttribArray 1
-        action DefaultWindowManager {..}
-  where
-    dtVs = Just
-      [__i|
-        \#version 330 core
-        layout (location = 0) in vec2 v_pos;
-        layout (location = 1) in vec2 v_tex_coord;
-        out vec2 f_tex_coord;
-        void main() {
-          gl_Position = vec4(v_pos, 0, 1);
-          f_tex_coord = v_tex_coord;
-        }
-      |]
-    dtFs = Just
-      [__i|
-        \#version 330 core
-        in vec2 f_tex_coord;
-        uniform sampler2D tex;
-        out vec4 color;
-        void main() {
-          color = texture(tex, f_tex_coord);
-        }
-      |]
+withDefaultWindowManager action = do
+  dwmWindows <- newIORef IntMap.empty
+  withQuadRenderer \dwmQuadRenderer -> do
+    action DefaultWindowManager {..}
 
 instance Scroll DefaultWindowManager where
   scroll x y dwm = readIORef (dwmWindows dwm) >>= mapM_ (\case WindowInfo w _ -> scroll x y w) . IntMap.elems
@@ -123,26 +85,7 @@ flush res@(Resolution w h) dwm = do
   let texRes = Resolution (w - margin * 2) (h - margin * 2)
   case onlyWin of
     WindowInfo win _ -> drawWindow res win ... renderToTexture texRes (drawWindow texRes win) \tex -> do
-      bindProgram (dwmProg dwm) do
-        withSlot texture2DSlot tex do
-          withSlot vertexArraySlot (dwmVAO dwm) do
-            withSlot arrayBufferSlot (dwmVBO dwm) do
-              writeArrayBuffer $
-                pixelQuadToNDC res
-                  ( (margin, margin)
-                  , (w - 1 - margin, margin)
-                  , (margin, h - 1 - margin)
-                  , (w - 1 - margin, h - 1 - margin)
-                  )
-                ++
-                [ 0, 1
-                , 1, 1
-                , 0, 0
-                , 1, 0
-                ]
-              texVar <- withCAString "tex" (glGetUniformLocation (dwmProg dwm))
-              glUniform1i texVar 0
-              glDrawArrays GL_TRIANGLE_STRIP 0 4
+      drawQuadTexture (dwmQuadRenderer dwm) res tex margin (h - 1 - margin) margin (w - 1 - margin)
   where _ ... a = a
 
 data DemoWindow = DemoWindow
@@ -151,7 +94,7 @@ data DemoWindow = DemoWindow
   , dwDocument :: Document
   , dwSelection :: IORef Selection
   , dwConfig :: Config
-  , dwCursor :: Cursor
+  , dwQuadRenderer :: QuadRenderer
   }
 
 withDemoWindow :: Config -> (DemoWindow -> IO a) -> IO a
@@ -160,7 +103,7 @@ withDemoWindow dwConfig action = do
   dwDocument <- Document.fromText <$> Text.readFile "./app/Weaver.hs"
   dwSelection <- newIORef (Selection (Coord 0 0) (Coord 0 0))
   withWeaver dwConfig \dwWeaver -> do
-    withCursor dwConfig \dwCursor -> do
+    withQuadRenderer \dwQuadRenderer -> do
       action DemoWindow {..}
 
 instance Scroll DemoWindow where
@@ -189,76 +132,43 @@ instance Window DemoWindow where
     height <- getLineHeight dwWeaver
     descender <- getDescender dwWeaver
     beginLine <- negate . truncate <$> readIORef dwScrollPos
-    let linePos idx = height * (idx - beginLine + 1) + descender
-        numLines = resVert res `divSat` height
-        divSat a b = let (r, m) = divMod a b in if m /= 0 then r + 1 else r
-    Selection anchor mark <- readIORef dwSelection
+    let
+      linePos idx = height * (idx - beginLine + 1) + descender
+      numLines = resVert res `divSat` height
+      divSat a b = let (r, m) = divMod a b in if m /= 0 then r + 1 else r
+      sanitize ln = if "\n" `Text.isSuffixOf` ln then (Text.dropEnd 1 ln <> " ") else ln
+    sel <- readIORef dwSelection
+    let selRanges = Selection.selLines dwDocument sel
     forM_ [ beginLine, beginLine + 1 .. min (beginLine + numLines) (Document.countLines dwDocument - 1) ] \idx -> do
       let y = linePos idx
-      let ln = Document.getLine idx dwDocument
-      let content = Text.dropWhileEnd (== '\n') ln
-      let getMid (_, x, _) = x
-      let cursors = [(coordLine anchor, coordColumn anchor), (coordLine mark, coordColumn mark)]
-      forM_ cursors \(cln, ccol) -> do
-        when (idx == cln) do
-          rq <- layoutTextCached (configFace dwConfig) content
-          xStart <- if ccol == 0 then pure 0 else getMid <$> Raqm.indexToPosition rq (ccol - 1)
-          xEnd <- if ccol == Text.lengthWord8 ln - 1 then pure (xStart + (faceIDSizePx (configFace dwConfig) `div` 2)) else getMid <$> Raqm.indexToPosition rq ccol
-          drawCursor res dwCursor (y - descender - height) (y - descender) (50 + xStart) (50 + xEnd)
-      let charLen ccol = Text.lengthWord8 . ICU.brkBreak . (!! 0) . ICU.breaks (ICU.breakCharacter ICU.Current) . Text.dropWord8 (fromIntegral ccol) $ ln
+      let ln = sanitize . Document.getLine idx $ dwDocument
+      let selRange = filter (\(l, _, _) -> l == idx) selRanges
+      let selColorSpec = fmap
+            (\(_, begin, end) ->
+              ( begin
+              , end + Document.charLengthAt dwDocument (Coord idx end)
+              , configPrimarySelectionForeground dwConfig
+              ))
+            selRange
+      let cursorRange = if idx /= coordLine (selMark sel) then [] else [coordColumn (selMark sel)]
+      let cursorColorSpec = fmap
+            (\pos ->
+              ( pos
+              , pos + Document.charLengthAt dwDocument (Coord idx pos)
+              , configPrimaryCursorForeground dwConfig
+              ))
+            cursorRange
+      let quads = fmap (\(_, begin, end) -> (begin, end, configPrimarySelectionBackground dwConfig)) selRange
+            ++ fmap (\pos -> (pos, pos, configPrimaryCursorBackground dwConfig)) cursorRange
+      forM_ quads \(begin, end, color) -> do
+        let getMid (_, x, _) = x
+        rq <- layoutTextCached (configFace dwConfig) ln
+        xStart <- if begin == 0 then pure 0 else getMid <$> Raqm.indexToPosition rq (begin - 1)
+        xEnd <- getMid <$> Raqm.indexToPosition rq end
+        drawQuadColor dwQuadRenderer res color (y - descender - height) (y - descender) (50 + xStart) (50 + xEnd)
       drawText dwWeaver res 5 y [(0, 100, configForeground dwConfig)] (Text.pack (show idx))
-      let colorSpec = fmap (\(_, ccol) -> (ccol, ccol + charLen ccol, configPrimaryCursorForeground dwConfig)) . filter (\(cln, _) -> idx == cln) $ cursors
       -- let rainbow = fmap (\(n, c) -> (n, n + 1, c)) . zip [0 ..] . cycle $ [ Color 0.93 0.94 0.96 1, Color 0.53 0.75 0.82 1, Color 0.37 0.51 0.67 1, Color 0.75 0.38 0.42 1, Color 0.86 0.53 0.44 1, Color 0.92 0.80 0.55 1, Color 0.64 0.75 0.55 1, Color 0.71 0.56 0.68 1 ]
-      drawText dwWeaver res 50 y (colorSpec ++ [(0, Text.lengthWord8 content, configForeground dwConfig)]) content
+      drawText dwWeaver res 50 y (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 ln, configForeground dwConfig)]) ln
       -- drawText dwWeaver res 50 y rainbow content
     -- drawText dwWeaver res 30 (height + descender) "file is filling the office."
     -- drawText dwWeaver res 30 (height * 2 + descender) "OPPO回应苹果起诉员工窃密：并未侵犯苹果公司商业秘密，相信公正的司法审理能够澄清事实。"
-
-data Cursor = Cursor
-  { cursorProg :: GLuint
-  , cursorVAO :: GL.VertexArray
-  , cursorVBO :: GL.Buffer
-  }
-
-withCursor :: Config -> (Cursor -> IO a) -> IO a
-withCursor config action =
-  withProgram vs Nothing fs \cursorProg -> do
-    withObject \cursorVAO -> do
-      withObject \cursorVBO -> do
-        withSlot arrayBufferSlot cursorVBO do
-          withSlot vertexArraySlot cursorVAO do
-            glVertexAttribPointer 0 2 GL_FLOAT GL_FALSE 8 nullPtr
-            glEnableVertexAttribArray 0
-        action Cursor {..}
-  where
-    vs = Just
-      [__i|
-        \#version 330 core
-        layout (location = 0) in vec2 v_pos;
-        void main() {
-          gl_Position = vec4(v_pos, 0, 1);
-        }
-      |]
-    fs =
-      let Color{..} = configPrimaryCursorBackground config
-      in Just
-        [__i|
-          \#version 330 core
-          out vec4 color;
-          void main() {
-            color = vec4(#{colorRed}, #{colorGreen}, #{colorBlue}, #{colorAlpha});
-          }
-        |]
-
-drawCursor :: Resolution -> Cursor -> Int -> Int -> Int -> Int -> IO ()
-drawCursor res Cursor{..} yStart yEnd xStart xEnd = do
-  bindProgram cursorProg do
-    withSlot vertexArraySlot cursorVAO do
-      withSlot arrayBufferSlot cursorVBO do
-        writeArrayBuffer . pixelQuadToNDC res $
-          ( (xStart, yStart)
-          , (xEnd, yStart)
-          , (xStart, yEnd)
-          , (xEnd, yEnd)
-          )
-        glDrawArrays GL_TRIANGLE_STRIP 0 4
