@@ -31,13 +31,13 @@ import Data.Text qualified as Text
 import Data.Text (Text)
 
 data Document = Document
-  { docLines :: Seq Text
+  { lines :: Seq Text
   }
 
-data Coord = Coord { coordLine :: Int, coordColumn :: Int }
+data Coord = Coord { line :: Int, column :: Int }
   deriving (Show, Eq, Ord)
 
-data Iv = Iv { ivBegin :: Coord, ivEnd :: Coord }
+data Iv = Iv { begin :: Coord, end :: Coord }
   deriving (Show, Eq)
 -- data EndOfLine = Cr | Lf | CrLf
 
@@ -50,33 +50,33 @@ empty :: Document
 empty = Document . Seq.singleton $ ""
 
 patch :: Iv -> Text -> Document -> Document
-patch (Iv (Coord bline bcol) (Coord eline ecol)) text doc@Document{docLines}
+patch (Iv (Coord bline bcol) (Coord eline ecol)) text doc
   | bline > eline = doc
   | otherwise = Document $ combineLines before (combineLines (toLines text) after)
   where
-    before = Seq.take bline docLines <> Seq.singleton prefix
-    after = (if Text.null suffix then Seq.empty else Seq.singleton suffix) <> Seq.drop (eline + 1) docLines
-    prefix = Text.takeWord8 (fromIntegral bcol) . fromJust . Seq.lookup bline $ docLines
-    suffix = Text.dropWord8 (fromIntegral ecol) . fromJust . Seq.lookup eline $ docLines
+    before = Seq.take bline doc.lines <> Seq.singleton prefix
+    after = (if Text.null suffix then Seq.empty else Seq.singleton suffix) <> Seq.drop (eline + 1) doc.lines
+    prefix = Text.takeWord8 (fromIntegral bcol) . fromJust . Seq.lookup bline $ doc.lines
+    suffix = Text.dropWord8 (fromIntegral ecol) . fromJust . Seq.lookup eline $ doc.lines
 
 extract :: Iv -> Document -> Text
-extract (Iv (Coord bline bcol) (Coord eline ecol)) Document{docLines}
-  | bline == eline = Text.dropWord8 (fromIntegral bcol) . Text.takeWord8 (fromIntegral ecol) . fromJust . Seq.lookup bline $ docLines
+extract (Iv (Coord bline bcol) (Coord eline ecol)) doc
+  | bline == eline = Text.dropWord8 (fromIntegral bcol) . Text.takeWord8 (fromIntegral ecol) . fromJust . Seq.lookup bline $ doc.lines
   | bline > eline = ""
   | otherwise = firstLine <> wholeLines <> lastLine
   where
-    firstLine = Text.dropWord8 (fromIntegral bcol) . fromJust . Seq.lookup bline $ docLines
-    wholeLines = foldMap (fromJust . flip Seq.lookup docLines) [ bline, bline + 1 .. eline - 1 ]
-    lastLine = Text.takeWord8 (fromIntegral ecol) . fromJust . Seq.lookup eline $ docLines
+    firstLine = Text.dropWord8 (fromIntegral bcol) . fromJust . Seq.lookup bline $ doc.lines
+    wholeLines = foldMap (fromJust . flip Seq.lookup doc.lines) [ bline, bline + 1 .. eline - 1 ]
+    lastLine = Text.takeWord8 (fromIntegral ecol) . fromJust . Seq.lookup eline $ doc.lines
 
 getLine :: Int -> Document -> Text
-getLine n Document{docLines} = fromJust . Seq.lookup n $ docLines
+getLine n doc = fromJust . Seq.lookup n $ doc.lines
 
 length :: Document -> Int
-length = getSum . foldMap (Sum . Text.length) . docLines
+length doc = getSum . foldMap (Sum . Text.length) $ doc.lines
 
 countLines :: Document -> Int
-countLines = Seq.length . docLines
+countLines doc = Seq.length doc.lines
 
 charLengthAt :: Document -> Coord -> Int
 charLengthAt = fmap (Text.lengthWord8 . ICU.brkBreak . fst . (!! 0)) . breakAfterCoord charBreaker
@@ -85,7 +85,7 @@ endOfDocument :: Document -> Coord
 endOfDocument doc = Coord line col
   where
     line = countLines doc - 1
-    col = Text.lengthWord8 . ICU.brkPrefix . last . ICU.breaks charBreaker . fromJust . Seq.lookup line . docLines $ doc
+    col = Text.lengthWord8 . ICU.brkPrefix . last . ICU.breaks charBreaker . fromJust . Seq.lookup line $ doc.lines
 
 moveCoord :: Document -> Int -> Coord -> Coord
 moveCoord _ 0 c = c
@@ -101,7 +101,7 @@ fromText :: Text -> Document
 fromText = Document <$> toLines
 
 toText :: Document -> Text
-toText = fold . docLines
+toText doc = fold doc.lines
 
 toLines :: Text -> Seq Text
 toLines text = fmap (<> "\n") initLines <> lastLines
@@ -119,7 +119,7 @@ combineLines x@(as Seq.:|> a) y@(b Seq.:<| bs)
   | otherwise = as <> Seq.singleton (a <> b) <> bs
 
 breakAfterCoord :: ICU.Breaker a -> Document -> Coord -> [(ICU.Break a, Coord)]
-breakAfterCoord breaker Document{docLines} (Coord line col) =
+breakAfterCoord breaker doc (Coord line col) =
   restLine ++ restDoc
   where
     restLine =
@@ -128,12 +128,12 @@ breakAfterCoord breaker Document{docLines} (Coord line col) =
       . Text.dropWord8 (fromIntegral col)
       . fromJust
       . Seq.lookup line
-      $ docLines
-    restDoc = fold . Seq.mapWithIndex (\idx text -> breakLine (idx + line + 1) text). Seq.drop (line + 1) $ docLines
+      $ doc.lines
+    restDoc = fold . Seq.mapWithIndex (\idx text -> breakLine (idx + line + 1) text). Seq.drop (line + 1) $ doc.lines
     breakLine idx = fmap (\brk -> (brk, Coord idx (Text.lengthWord8 (ICU.brkPrefix brk)))) . ICU.breaks breaker
 
 breakBeforeCoord :: ICU.Breaker a -> Document -> Coord -> [(ICU.Break a, Coord)]
-breakBeforeCoord breaker Document{docLines} (Coord line col) =
+breakBeforeCoord breaker doc (Coord line col) =
   restLine ++ restDoc
   where
     restLine =
@@ -143,8 +143,8 @@ breakBeforeCoord breaker Document{docLines} (Coord line col) =
       . Text.takeWord8 (fromIntegral col)
       . fromJust
       . Seq.lookup line
-      $ docLines
-    restDoc = fold . Seq.reverse . Seq.mapWithIndex (\idx text -> breakLine idx text). Seq.take line $ docLines
+      $ doc.lines
+    restDoc = fold . Seq.reverse . Seq.mapWithIndex (\idx text -> breakLine idx text). Seq.take line $ doc.lines
     breakLine idx = reverse . fmap (\brk -> (brk, Coord idx (Text.lengthWord8 (ICU.brkPrefix brk)))) . ICU.breaks breaker
 
 indexSatDef :: a -> [a] -> Int -> a

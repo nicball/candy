@@ -6,28 +6,28 @@ module Config
   ) where
 
 data Color = Color
-  { colorRed :: Float
-  , colorGreen :: Float
-  , colorBlue :: Float
-  , colorAlpha :: Float
+  { red :: Float
+  , green :: Float
+  , blue :: Float
+  , alpha :: Float
   }
 
 colorToRGBA :: Color -> [Float]
-colorToRGBA Color{..} = [ colorRed, colorGreen, colorBlue, colorAlpha ]
+colorToRGBA Color{..} = [ red, green, blue, alpha ]
 
 data Config = Config
-  { configFace :: FaceID
-  , configBackground :: Color
-  , configForeground :: Color
-  , configPrimarySelectionForeground :: Color
-  , configPrimarySelectionBackground :: Color
-  , configPrimaryCursorForeground :: Color
-  , configPrimaryCursorBackground :: Color
+  { face :: FaceID
+  , background :: Color
+  , foreground :: Color
+  , primarySelectionForeground :: Color
+  , primarySelectionBackground :: Color
+  , primaryCursorForeground :: Color
+  , primaryCursorBackground :: Color
   }
 
 data FaceID = FaceID
-  { faceIDPath :: FilePath
-  , faceIDIndex :: Int
-  , faceIDSizePx :: Int
+  { path :: FilePath
+  , index :: Int
+  , sizePx :: Int
   }
   deriving (Eq, Ord)

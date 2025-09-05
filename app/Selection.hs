@@ -22,7 +22,7 @@ import Data.Text (Text)
 import Document (breakAfterCoord, charBreaker, countBreaks, moveCoord, wordBreaker, Coord(..), Document)
 import Document qualified
 
-data Selection = Selection { selAnchor :: Coord, selMark :: Coord }
+data Selection = Selection { anchor :: Coord, mark :: Coord }
   deriving Show
 
 alternate :: Selection -> Selection
@@ -66,18 +66,18 @@ selLines doc sel = firstRange : mid ++ lastRange
 type Movement = Document -> Selection -> Selection
 
 extend :: Movement -> Movement
-extend move doc sel = (move doc sel) { selAnchor = selAnchor sel }
+extend move doc sel = (move doc sel) { anchor = sel.anchor }
 
 moveRight :: Movement
 moveRight doc sel = Selection c c
-  where c = moveCoord doc 1 (selMark sel)
+  where c = moveCoord doc 1 sel.mark
 
 moveLeft :: Movement
 moveLeft doc sel = Selection c c  
-  where c = moveCoord doc (-1) (selMark sel)
+  where c = moveCoord doc (-1) sel.mark
 
 selectToWordEnd :: Movement
-selectToWordEnd doc Selection{selMark = curr} =
+selectToWordEnd doc Selection{mark = curr} =
   case findAnchor . breakAfterCoord wordBreaker doc $ curr of
     Nothing -> Selection curr curr
     Just anchor -> Selection anchor . endCoord . findMark . breakAfterCoord wordBreaker doc $ anchor
@@ -96,7 +96,7 @@ selectToWordEnd doc Selection{selMark = curr} =
     endCoord (brk, Coord line col) = Coord line (col + lastCharOffset (ICU.brkBreak brk))
 
 selectToWordStart :: Movement
-selectToWordStart doc Selection{selMark = curr} =
+selectToWordStart doc Selection{mark = curr} =
   case findAnchor . breakAfterCoord wordBreaker doc $ curr of
     Nothing -> Selection curr curr
     Just anchor -> Selection anchor . endCoord . findMark . breakAfterCoord wordBreaker doc $ anchor

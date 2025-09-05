@@ -111,13 +111,13 @@ getGlyphs rq = do
     peekArray (fromIntegral s) pglyphs
 
 data Glyph = Glyph
-  { gIndex :: Int
-  , gXAdvance :: Int
-  , gYAdvance :: Int
-  , gXOffset :: Int
-  , gYOffset :: Int
-  , gCluster :: Int
-  , gFtFace :: FT_Face
+  { index :: Int
+  , xAdvance :: Int
+  , yAdvance :: Int
+  , xOffset :: Int
+  , yOffset :: Int
+  , cluster :: Int
+  , ftFace :: FT_Face
   }
   deriving Show
 
@@ -133,13 +133,13 @@ instance Storable Glyph where
     <*> fmap (fromIntegral :: Word32 -> Int)  (#{peek raqm_glyph_t, cluster}   addr)
     <*>                                       (#{peek raqm_glyph_t, ftface}    addr)
   poke addr Glyph{..} = do
-    #{poke raqm_glyph_t, index}     addr (fromIntegral gIndex    :: C.CUInt)
-    #{poke raqm_glyph_t, x_advance} addr (fromIntegral gXAdvance :: C.CInt)
-    #{poke raqm_glyph_t, y_advance} addr (fromIntegral gYAdvance :: C.CInt)
-    #{poke raqm_glyph_t, x_offset}  addr (fromIntegral gXOffset  :: C.CInt)
-    #{poke raqm_glyph_t, y_offset}  addr (fromIntegral gYOffset  :: C.CInt)
-    #{poke raqm_glyph_t, cluster}   addr (fromIntegral gCluster  :: Word32)
-    #{poke raqm_glyph_t, ftface}    addr               gFtFace
+    #{poke raqm_glyph_t, index}     addr (fromIntegral index    :: C.CUInt)
+    #{poke raqm_glyph_t, x_advance} addr (fromIntegral xAdvance :: C.CInt)
+    #{poke raqm_glyph_t, y_advance} addr (fromIntegral yAdvance :: C.CInt)
+    #{poke raqm_glyph_t, x_offset}  addr (fromIntegral xOffset  :: C.CInt)
+    #{poke raqm_glyph_t, y_offset}  addr (fromIntegral yOffset  :: C.CInt)
+    #{poke raqm_glyph_t, cluster}   addr (fromIntegral cluster  :: Word32)
+    #{poke raqm_glyph_t, ftface}    addr               ftFace
 
 foreign import ccall "raqm_index_to_position"
   indexToPosition_ :: Raqm -> C.Ptr C.CSize -> C.Ptr C.CInt -> C.Ptr C.CInt -> IO Bool

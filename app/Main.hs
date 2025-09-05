@@ -13,27 +13,27 @@ import Window (flush, withDefaultWindowManager, withDemoWindow, WindowManager(re
 
 config :: Config
 config = Config
-  { configFace = FaceID
-    { faceIDSizePx = 24
-    -- , faceIDPath = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
-    -- , faceIDIndex = 17
+  { face = FaceID
+    { sizePx = 24
+    , path = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
+    , index = 17
 
-    -- , faceIDPath = "/nix/store/569nxifmwb4r26phghxyn4xszdg7xjxm-source-han-sans-2.004/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
-    -- , faceIDIndex = 27
+    -- , path = "/nix/store/569nxifmwb4r26phghxyn4xszdg7xjxm-source-han-sans-2.004/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
+    -- , index = 27
 
-    -- , faceIDPath = "/nix/store/vl44mgyhq46plr28vfj06zj9lk89jyaw-liberation-fonts-2.1.5/share/fonts/truetype/LiberationSans-Regular.ttf"
-    , faceIDPath = "/nix/store/hibcvpqv3w7s7fpl3wgd8c33hs0znywq-Iosevka-33.2.3/share/fonts/truetype/Iosevka-ExtendedMedium.ttf"
-    -- , faceIDPath = "./font.ttf"
-    -- , faceIDPath = "/nix/store/46g6p6698lc50ypik6mgg0wf3q23gzqz-dejavu-fonts-2.37/share/fonts/truetype/DejaVuSansMono.ttf"
-    , faceIDIndex = 0
+    -- , path = "/nix/store/vl44mgyhq46plr28vfj06zj9lk89jyaw-liberation-fonts-2.1.5/share/fonts/truetype/LiberationSans-Regular.ttf"
+    -- , path = "/nix/store/hibcvpqv3w7s7fpl3wgd8c33hs0znywq-Iosevka-33.2.3/share/fonts/truetype/Iosevka-ExtendedMedium.ttf"
+    -- , path = "./font.ttf"
+    -- , path = "/nix/store/46g6p6698lc50ypik6mgg0wf3q23gzqz-dejavu-fonts-2.37/share/fonts/truetype/DejaVuSansMono.ttf"
+    -- , index = 0
     }
 
-  , configForeground = Color 0.93 0.94 0.96 1
-  , configBackground = Color 0.18 0.2 0.25 0.8
-  , configPrimarySelectionForeground = Color 0.18 0.2 0.25 1
-  , configPrimarySelectionBackground = Color 0.37 0.5 0.67 1
-  , configPrimaryCursorForeground = Color 0.18 0.2 0.25 1
-  , configPrimaryCursorBackground = Color 0.53 0.75 0.82 1
+  , foreground = Color 0.93 0.94 0.96 1
+  , background = Color 0.18 0.2 0.25 0.8
+  , primarySelectionForeground = Color 0.18 0.2 0.25 1
+  , primarySelectionBackground = Color 0.37 0.5 0.67 1
+  , primaryCursorForeground = Color 0.18 0.2 0.25 1
+  , primaryCursorBackground = Color 0.53 0.75 0.82 1
   }
 
 main :: IO ()
@@ -66,8 +66,8 @@ main = do
 
     redraw wm win = do
       GLFW.getWindowSize win >>= uncurry (onResize win)
-      let Color{..} = configBackground config in
-        glClearColor colorRed colorGreen colorBlue colorAlpha
+      let Color{..} = config.background in
+        glClearColor red green blue alpha
       glClear GL_COLOR_BUFFER_BIT
 
       Viewport 0 0 w h <- getSlot viewportSlot

@@ -184,41 +184,41 @@ withSlot s a action = do
   setSlot s a
   action `finally` setSlot s old
 
-newtype Texture = Texture { unTexture :: GLuint }
+newtype Texture = Texture { id :: GLuint }
 
 instance GLObject Texture where
   genObject = Texture <$> withPeek (glGenTextures 1)
-  deleteObject o = C.with (unTexture o) (glDeleteTextures 1)
+  deleteObject o = C.with o.id (glDeleteTextures 1)
 
-data TextureSlot = TextureSlot { tsTarget :: GLenum, tsParameter :: GLenum }
+data TextureSlot = TextureSlot { target :: GLenum, parameter :: GLenum }
 
 texture2DSlot :: TextureSlot
 texture2DSlot = TextureSlot GL_TEXTURE_2D GL_TEXTURE_BINDING_2D
 
 instance GLSlot Texture TextureSlot where
-  getSlot s = Texture <$> withPeek (glGetIntegerv (tsParameter s) . C.castPtr)
-  setSlot s a = glBindTexture (tsTarget s) (unTexture a)
+  getSlot s = Texture <$> withPeek (glGetIntegerv s.parameter . C.castPtr)
+  setSlot s a = glBindTexture s.target a.id
 
-newtype Buffer = Buffer { unBuffer :: GLuint }
+newtype Buffer = Buffer { id :: GLuint }
 
 instance GLObject Buffer where
   genObject = Buffer <$> withPeek (glGenBuffers 1)
-  deleteObject o = C.with (unBuffer o) (glDeleteBuffers 1)
+  deleteObject o = C.with o.id (glDeleteBuffers 1)
 
-data BufferSlot = BufferSlot { bsTarget :: GLenum, bsParameter :: GLenum }
+data BufferSlot = BufferSlot { target :: GLenum, parameter :: GLenum }
 
 arrayBufferSlot :: BufferSlot
 arrayBufferSlot = BufferSlot GL_ARRAY_BUFFER GL_ARRAY_BUFFER_BINDING
 
 instance GLSlot Buffer BufferSlot where
-  getSlot s = Buffer <$> withPeek (glGetIntegerv (bsParameter s) . C.castPtr)
-  setSlot s a = glBindBuffer (bsTarget s) (unBuffer a)
+  getSlot s = Buffer <$> withPeek (glGetIntegerv s.parameter . C.castPtr)
+  setSlot s a = glBindBuffer s.target a.id
 
-newtype VertexArray = VertexArray { unVertexArray :: GLuint }
+newtype VertexArray = VertexArray { id :: GLuint }
 
 instance GLObject VertexArray where
   genObject = VertexArray <$> withPeek (glGenVertexArrays 1)
-  deleteObject o = C.with (unVertexArray o) (glDeleteVertexArrays 1)
+  deleteObject o = C.with o.id (glDeleteVertexArrays 1)
 
 data VertexArraySlot = VertexArraySlot
 
@@ -227,13 +227,13 @@ vertexArraySlot = VertexArraySlot
 
 instance GLSlot VertexArray VertexArraySlot where
   getSlot _ = VertexArray <$> withPeek (glGetIntegerv GL_VERTEX_ARRAY_BINDING . C.castPtr)
-  setSlot _ = glBindVertexArray . unVertexArray
+  setSlot _ o = glBindVertexArray o.id
 
-newtype Framebuffer = Framebuffer { unFramebuffer :: GLuint }
+newtype Framebuffer = Framebuffer { id :: GLuint }
 
 instance GLObject Framebuffer where
   genObject = Framebuffer <$> withPeek (glGenFramebuffers 1)
-  deleteObject o = C.with (unFramebuffer o) (glDeleteFramebuffers 1)
+  deleteObject o = C.with o.id (glDeleteFramebuffers 1)
 
 data FramebufferSlot = FramebufferSlot
 
@@ -242,7 +242,7 @@ framebufferSlot = FramebufferSlot
 
 instance GLSlot Framebuffer FramebufferSlot where
   getSlot _ = Framebuffer <$> withPeek (glGetIntegerv GL_FRAMEBUFFER_BINDING . C.castPtr)
-  setSlot _ = glBindFramebuffer GL_FRAMEBUFFER . unFramebuffer
+  setSlot _ o = glBindFramebuffer GL_FRAMEBUFFER o.id
 
 data Viewport = Viewport { viewportX :: Int, viewportY :: Int, viewportWidth :: Int, viewportHeight :: Int }
 
@@ -270,17 +270,17 @@ renderToTexture (Resolution w h) render action =
       C.withArray [0, 0, 0, 0] (glTexParameterfv GL_TEXTURE_2D GL_TEXTURE_BORDER_COLOR)
     withObject \fbo -> do
       withSlot framebufferSlot fbo do
-        glFramebufferTexture2D GL_FRAMEBUFFER GL_COLOR_ATTACHMENT0 GL_TEXTURE_2D (unTexture texture) 0
+        glFramebufferTexture2D GL_FRAMEBUFFER GL_COLOR_ATTACHMENT0 GL_TEXTURE_2D texture.id 0
         checkGLError "glFramebufferTexture2D"
         flip assert (pure ()) . (== GL_FRAMEBUFFER_COMPLETE) =<< glCheckFramebufferStatus GL_FRAMEBUFFER
         withSlot viewportSlot (Viewport 0 0 w h) (void render)
     withSlot texture2DSlot texture (glGenerateMipmap GL_TEXTURE_2D)
     action texture
 
-data Resolution = Resolution { resHori :: Int, resVert :: Int }
+data Resolution = Resolution { w :: Int, h :: Int }
 
 pixelQuadToNDC :: Resolution -> ((Int, Int), (Int, Int), (Int, Int), (Int, Int)) -> [GLfloat]
-pixelQuadToNDC (Resolution w h) (tl, tr, bl, br) =
+pixelQuadToNDC res (tl, tr, bl, br) =
   concat
     [ scale tl 0 1
     , scale tr 1 1
@@ -289,23 +289,23 @@ pixelQuadToNDC (Resolution w h) (tl, tr, bl, br) =
     ]
   where
     scale (x, y) dx dy =
-      [ -1 + (fromIntegral x + dx)      * 2 / fromIntegral w
-      ,  1 + (-fromIntegral y - 1 + dy) * 2 / fromIntegral h
+      [ -1 + (fromIntegral x + dx)      * 2 / fromIntegral res.w
+      ,  1 + (-fromIntegral y - 1 + dy) * 2 / fromIntegral res.h
       ]
 
 data QuadRenderer = QuadRenderer
-  { quadProg :: GLuint
-  , quadVAO :: GL.VertexArray
-  , quadVBO :: GL.Buffer
+  { prog :: GLuint
+  , vao :: GL.VertexArray
+  , vbo :: GL.Buffer
   }
 
 withQuadRenderer ::(QuadRenderer -> IO a) -> IO a
 withQuadRenderer action =
-  withProgram vs Nothing fs \quadProg -> do
-    withObject \quadVAO -> do
-      withObject \quadVBO -> do
-        withSlot arrayBufferSlot quadVBO do
-          withSlot vertexArraySlot quadVAO do
+  withProgram vs Nothing fs \prog -> do
+    withObject \vao -> do
+      withObject \vbo -> do
+        withSlot arrayBufferSlot vbo do
+          withSlot vertexArraySlot vao do
             glVertexAttribPointer 0 2 GL_FLOAT GL_FALSE 8 C.nullPtr
             glEnableVertexAttribArray 0
             glVertexAttribPointer 1 2 GL_FLOAT GL_FALSE 8 (C.plusPtr C.nullPtr 32)
@@ -340,10 +340,10 @@ withQuadRenderer action =
       |]
 
 drawQuadColor :: QuadRenderer -> Resolution -> Color -> Int -> Int -> Int -> Int -> IO ()
-drawQuadColor QuadRenderer{..} res color yStart yEnd xStart xEnd = do
-  bindProgram quadProg do
-    withSlot vertexArraySlot quadVAO do
-      withSlot arrayBufferSlot quadVBO do
+drawQuadColor qr res color yStart yEnd xStart xEnd = do
+  bindProgram qr.prog do
+    withSlot vertexArraySlot qr.vao do
+      withSlot arrayBufferSlot qr.vbo do
         writeArrayBuffer $
           pixelQuadToNDC res
             ( (xStart, yStart)
@@ -353,16 +353,16 @@ drawQuadColor QuadRenderer{..} res color yStart yEnd xStart xEnd = do
             )
           ++
           [ 0, 1, 1, 1, 0, 0, 1, 0 ]
-        uColor <- C.withCAString "f_color" (glGetUniformLocation quadProg)
+        uColor <- C.withCAString "f_color" (glGetUniformLocation qr.prog)
         let Color{..} = color in
-          glUniform4f uColor colorRed colorGreen colorBlue colorAlpha
+          glUniform4f uColor red green blue alpha
         glDrawArrays GL_TRIANGLE_STRIP 0 4
 
 drawQuadTexture :: QuadRenderer -> Resolution -> Texture -> Int -> Int -> Int -> Int -> IO ()
-drawQuadTexture QuadRenderer{..} res texture yStart yEnd xStart xEnd = do
-  bindProgram quadProg do
-    withSlot vertexArraySlot quadVAO do
-      withSlot arrayBufferSlot quadVBO do
+drawQuadTexture qr res texture yStart yEnd xStart xEnd = do
+  bindProgram qr.prog do
+    withSlot vertexArraySlot qr.vao do
+      withSlot arrayBufferSlot qr.vbo do
         writeArrayBuffer $
           pixelQuadToNDC res
             ( (xStart, yStart)
@@ -372,7 +372,7 @@ drawQuadTexture QuadRenderer{..} res texture yStart yEnd xStart xEnd = do
             )
           ++
           [ 0, 1, 1, 1, 0, 0, 1, 0 ]
-        uUseTexture <- C.withCAString "use_texture" (glGetUniformLocation quadProg)
+        uUseTexture <- C.withCAString "use_texture" (glGetUniformLocation qr.prog)
         glUniform1i uUseTexture 1
         withSlot texture2DSlot texture do
           glDrawArrays GL_TRIANGLE_STRIP 0 4
