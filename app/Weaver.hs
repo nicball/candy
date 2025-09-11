@@ -120,7 +120,7 @@ drawText weaver res originX originY colorspec text = do
   where
     genVertexArray = do
       glyphs <- Raqm.getGlyphs =<< layoutTextCached weaver.face text
-      renderedGlyphs <- renderGlyphToAtlas weaver (fmap (\g -> g.index) glyphs)
+      renderedGlyphs <- renderGlyphToAtlas weaver (fmap (.index) glyphs)
       concat . reverse . snd <$> foldM renderGlyph (0, []) (zip glyphs renderedGlyphs)
       where
         renderGlyph (penX, result) (glyph, rg) =

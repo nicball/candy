@@ -1,9 +1,11 @@
+{-# LANGUAGE MultiWayIf #-}
+
 module Selection
   ( Selection(..)
   , alternate
   , selMin
   , selMax
-  , selLines
+  , selAtLine
   , extend
   , moveLeft
   , moveRight
@@ -12,7 +14,6 @@ module Selection
   ) where
 
 import Data.Char qualified as Char
-import Data.Functor ((<&>))
 import Data.Maybe (listToMaybe)
 import Data.Text.Foreign qualified as Text
 import Data.Text.ICU qualified as ICU
@@ -53,15 +54,18 @@ ivToSel doc Iv{..} = Selection ivBegin end
       else moveCoord doc (-1) ivEnd
 -}
 
-selLines :: Document -> Selection -> [(Int, Int, Int)]
-selLines _ (Selection (Coord aln acol) (Coord mln mcol)) | aln == mln = [(aln, min acol mcol, max acol mcol)]
-selLines doc sel = firstRange : mid ++ lastRange
+selAtLine :: Document -> Selection -> Int -> Maybe (Int, Int)
+selAtLine _ (Selection (Coord aln acol) (Coord mln mcol)) ln | aln == mln =
+  if aln == ln
+    then Just (min acol mcol, max acol mcol)
+    else Nothing
+selAtLine doc sel ln = if
+  | bln == ln -> Just (bcol, (lastCharOffset . Document.getLine bln $ doc))
+  | bln < ln && ln < eln -> Just (0, lastCharOffset . Document.getLine ln $ doc)
+  | ln == eln -> Just (0, ecol)
+  | otherwise -> Nothing
   where
     (Coord bln bcol, Coord eln ecol) = (selMin sel, selMax sel)
-    firstRange = (bln, bcol, (lastCharOffset . Document.getLine bln $ doc))
-    lastRange = if ecol == 0 then [] else [(eln, 0, ecol)]
-    mid = [bln + 1, bln + 2 .. eln - 1] <&> \ln ->
-      (ln, 0, lastCharOffset . Document.getLine ln $ doc)
 
 type Movement = Document -> Selection -> Selection
 

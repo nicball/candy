@@ -23,6 +23,7 @@ data Config = Config
   , primarySelectionBackground :: Color
   , primaryCursorForeground :: Color
   , primaryCursorBackground :: Color
+  , cursorRangeOnScreen :: (Float, Float)
   }
 
 data FaceID = FaceID

@@ -1,5 +1,3 @@
-{-# LANGUAGE MultiWayIf #-}
-
 module Window
   ( Window(..)
   , WindowID
@@ -17,7 +15,8 @@ module Window
 
 import Control.Monad (forM_)
 import Data.IntMap qualified as IntMap
-import Data.IORef (IORef, modifyIORef, newIORef, readIORef)
+import Data.IORef (IORef, modifyIORef, newIORef, readIORef, writeIORef)
+import Data.Maybe (maybeToList)
 import Data.Text.Foreign qualified as Text
 import Data.Text.IO qualified as Text
 import Data.Text qualified as Text
@@ -27,7 +26,7 @@ import Graphics.UI.GLFW qualified as GLFW
 import Config (Config(..), Color(..))
 import Document (Document, Coord(..))
 import Document qualified
-import GL (drawQuadColor, drawQuadTexture, renderToTexture, withQuadRenderer, QuadRenderer, Resolution(..))
+import GL (drawQuadColor, drawQuadTexture, renderToTexture, withQuadRenderer, QuadRenderer, Resolution(..), getSlot, Viewport(..), viewportSlot)
 import Raqm qualified
 import Selection qualified
 import Selection (Selection(..))
@@ -84,12 +83,11 @@ flush res@(Resolution w h) dwm = do
   let margin = 20
   let texRes = Resolution (w - margin * 2) (h - margin * 2)
   case onlyWin of
-    WindowInfo win _ -> drawWindow res win ... renderToTexture texRes (drawWindow texRes win) \tex -> do
+    WindowInfo win _ -> renderToTexture texRes (drawWindow texRes win) \tex -> do
       drawQuadTexture dwm.quadRenderer res tex margin (h - 1 - margin) margin (w - 1 - margin)
-  where _ ... a = a
 
 data DemoWindow = DemoWindow
-  { scrollPos :: IORef Double
+  { screenPos :: IORef Int
   , weaver :: Weaver
   , document :: Document
   , selection :: IORef Selection
@@ -99,7 +97,7 @@ data DemoWindow = DemoWindow
 
 withDemoWindow :: Config -> (DemoWindow -> IO a) -> IO a
 withDemoWindow config action = do
-  scrollPos <- newIORef 0
+  screenPos <- newIORef 0
   document <- Document.fromText <$> Text.readFile "./app/Weaver.hs"
   selection <- newIORef (Selection (Coord 0 0) (Coord 0 0))
   withWeaver config \weaver -> do
@@ -107,17 +105,32 @@ withDemoWindow config action = do
       action DemoWindow{..}
 
 instance Scroll DemoWindow where
-  scroll _ y DemoWindow{scrollPos} = modifyIORef scrollPos (min 0 . (+ y))
+  scroll _ y DemoWindow{screenPos, weaver} = do
+    height <- getLineHeight weaver
+    modifyIORef screenPos (max 0 . (\p -> p - truncate y * height))
 
 instance SendKey DemoWindow where
-  sendKey key mods DemoWindow{selection, document} = do
+  sendKey key mods dw = do
     case key of
-      GLFW.Key'H -> modifyIORef selection (ext Selection.moveLeft document)
-      GLFW.Key'L -> modifyIORef selection (ext Selection.moveRight document)
-      GLFW.Key'E -> modifyIORef selection (ext Selection.selectToWordEnd document)
-      GLFW.Key'W -> modifyIORef selection (ext Selection.selectToWordStart document)
+      GLFW.Key'H -> modifyIORef dw.selection (ext Selection.moveLeft dw.document)
+      GLFW.Key'L -> modifyIORef dw.selection (ext Selection.moveRight dw.document)
+      GLFW.Key'E -> modifyIORef dw.selection (ext Selection.selectToWordEnd dw.document)
+      GLFW.Key'W -> modifyIORef dw.selection (ext Selection.selectToWordStart dw.document)
       _ -> pure ()
-    where ext m = if GLFW.modifierKeysShift mods then Selection.extend m else m
+    ensureCursorRangeOnScreen
+    where
+      ext m = if GLFW.modifierKeysShift mods then Selection.extend m else m
+      ensureCursorRangeOnScreen = do
+        Coord ln _ <- (.mark) <$> readIORef dw.selection
+        height <- getLineHeight dw.weaver
+        let markPos = height * ln
+        screenPos <- readIORef dw.screenPos
+        Viewport _ _ _ screenHeight <- getSlot viewportSlot
+        let
+          (topRange, bottomRange) = dw.config.cursorRangeOnScreen
+          maxScreenPos = markPos - truncate (fromIntegral screenHeight * topRange)
+          minScreenPos = markPos + height + truncate (fromIntegral screenHeight * (1 - bottomRange)) - screenHeight
+        writeIORef dw.screenPos . max 0 . min maxScreenPos . max minScreenPos $ screenPos
 
 instance Window DemoWindow where
   drawWindow res dw = do
@@ -131,20 +144,20 @@ instance Window DemoWindow where
     --     drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s) "haha"
     height <- getLineHeight dw.weaver
     descender <- getDescender dw.weaver
-    beginLine <- negate . truncate <$> readIORef dw.scrollPos
+    beginPos <- readIORef dw.screenPos
     let
-      linePos idx = height * (idx - beginLine + 1) + descender
+      beginLine = beginPos `div` height
+      linePos idx = height * (idx + 1) + descender - beginPos
       numLines = res.h `divSat` height
       divSat a b = let (r, m) = divMod a b in if m /= 0 then r + 1 else r
       sanitize ln = if "\n" `Text.isSuffixOf` ln then (Text.dropEnd 1 ln <> " ") else ln
     sel <- readIORef dw.selection
-    let selRanges = Selection.selLines dw.document sel
     forM_ [ beginLine, beginLine + 1 .. min (beginLine + numLines) (Document.countLines dw.document - 1) ] \idx -> do
       let y = linePos idx
       let ln = sanitize . Document.getLine idx $ dw.document
-      let selRange = filter (\(l, _, _) -> l == idx) selRanges
+      let selRange = maybeToList . Selection.selAtLine dw.document sel $ idx
       let selColorSpec = fmap
-            (\(_, begin, end) ->
+            (\(begin, end) ->
               ( begin
               , end + Document.charLengthAt dw.document (Coord idx end)
               , dw.config.primarySelectionForeground
@@ -158,7 +171,7 @@ instance Window DemoWindow where
               , dw.config.primaryCursorForeground
               ))
             cursorRange
-      let quads = fmap (\(_, begin, end) -> (begin, end, dw.config.primarySelectionBackground)) selRange
+      let quads = fmap (\(begin, end) -> (begin, end, dw.config.primarySelectionBackground)) selRange
             ++ fmap (\pos -> (pos, pos, dw.config.primaryCursorBackground)) cursorRange
       forM_ quads \(begin, end, color) -> do
         let getMid (_, x, _) = x

@@ -34,6 +34,7 @@ config = Config
   , primarySelectionBackground = Color 0.37 0.5 0.67 1
   , primaryCursorForeground = Color 0.18 0.2 0.25 1
   , primaryCursorBackground = Color 0.53 0.75 0.82 1
+  , cursorRangeOnScreen = (0.1, 0.9)
   }
 
 main :: IO ()

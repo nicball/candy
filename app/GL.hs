@@ -244,7 +244,7 @@ instance GLSlot Framebuffer FramebufferSlot where
   getSlot _ = Framebuffer <$> withPeek (glGetIntegerv GL_FRAMEBUFFER_BINDING . C.castPtr)
   setSlot _ o = glBindFramebuffer GL_FRAMEBUFFER o.id
 
-data Viewport = Viewport { viewportX :: Int, viewportY :: Int, viewportWidth :: Int, viewportHeight :: Int }
+data Viewport = Viewport { x :: Int, y :: Int, width :: Int, height :: Int }
 
 data ViewportSlot = ViewportSlot
 
