@@ -89,7 +89,7 @@ flush res@(Resolution w h) dwm = do
 data DemoWindow = DemoWindow
   { screenPos :: IORef Int
   , weaver :: Weaver
-  , document :: Document
+  , document :: IORef Document
   , selection :: IORef Selection
   , config :: Config
   , quadRenderer :: QuadRenderer
@@ -98,7 +98,7 @@ data DemoWindow = DemoWindow
 withDemoWindow :: Config -> (DemoWindow -> IO a) -> IO a
 withDemoWindow config action = do
   screenPos <- newIORef 0
-  document <- Document.fromText <$> Text.readFile "./app/Weaver.hs"
+  document <- newIORef . Document.fromText =<< Text.readFile "./test.txt"
   selection <- newIORef (Selection (Coord 0 0) (Coord 0 0))
   withWeaver config \weaver -> do
     withQuadRenderer \quadRenderer -> do
@@ -112,10 +112,18 @@ instance Scroll DemoWindow where
 instance SendKey DemoWindow where
   sendKey key mods dw = do
     case key of
-      GLFW.Key'H -> modifyIORef dw.selection (ext Selection.moveLeft dw.document)
-      GLFW.Key'L -> modifyIORef dw.selection (ext Selection.moveRight dw.document)
-      GLFW.Key'E -> modifyIORef dw.selection (ext Selection.selectToWordEnd dw.document)
-      GLFW.Key'W -> modifyIORef dw.selection (ext Selection.selectToWordStart dw.document)
+      GLFW.Key'H -> modifyIORef dw.selection . ext Selection.moveLeft =<< readIORef dw.document
+      GLFW.Key'L -> modifyIORef dw.selection . ext Selection.moveRight =<< readIORef dw.document
+      GLFW.Key'E -> modifyIORef dw.selection . ext Selection.selectToWordEnd =<< readIORef dw.document
+      GLFW.Key'B -> modifyIORef dw.selection . ext Selection.selectToWordBegin =<< readIORef dw.document
+      GLFW.Key'W -> modifyIORef dw.selection . ext Selection.selectToWordStart =<< readIORef dw.document
+      GLFW.Key'X -> modifyIORef dw.selection . Selection.expandToLine =<< readIORef dw.document
+      GLFW.Key'D -> do
+        sel <- readIORef dw.selection
+        doc <- readIORef dw.document
+        let (newDoc, translate) = Document.patch (Selection.selToIv doc sel) "" doc
+        writeIORef dw.document newDoc
+        writeIORef dw.selection $ Selection (translate sel.anchor) (translate sel.mark)
       _ -> pure ()
     ensureCursorRangeOnScreen
     where
@@ -142,6 +150,7 @@ instance Window DemoWindow where
     --     drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s - 1) "haha"
     --   withWeaver cfg { configFontSizePx = s } \weaver -> do
     --     drawText weaver (Resolution w h) (w `div` 2) (h `div` 2 + 2 * s) "haha"
+    document <- readIORef dw.document
     height <- getLineHeight dw.weaver
     descender <- getDescender dw.weaver
     beginPos <- readIORef dw.screenPos
@@ -152,14 +161,14 @@ instance Window DemoWindow where
       divSat a b = let (r, m) = divMod a b in if m /= 0 then r + 1 else r
       sanitize ln = if "\n" `Text.isSuffixOf` ln then (Text.dropEnd 1 ln <> " ") else ln
     sel <- readIORef dw.selection
-    forM_ [ beginLine, beginLine + 1 .. min (beginLine + numLines) (Document.countLines dw.document - 1) ] \idx -> do
+    forM_ [ beginLine, beginLine + 1 .. min (beginLine + numLines) (Document.countLines document - 1) ] \idx -> do
       let y = linePos idx
-      let ln = sanitize . Document.getLine idx $ dw.document
-      let selRange = maybeToList . Selection.selAtLine dw.document sel $ idx
+      let ln = sanitize . Document.getLine idx $ document
+      let selRange = maybeToList . Selection.selAtLine document sel $ idx
       let selColorSpec = fmap
             (\(begin, end) ->
               ( begin
-              , end + Document.charLengthAt dw.document (Coord idx end)
+              , end + Document.charLengthAt document (Coord idx end)
               , dw.config.primarySelectionForeground
               ))
             selRange
@@ -167,7 +176,7 @@ instance Window DemoWindow where
       let cursorColorSpec = fmap
             (\pos ->
               ( pos
-              , pos + Document.charLengthAt dw.document (Coord idx pos)
+              , pos + Document.charLengthAt document (Coord idx pos)
               , dw.config.primaryCursorForeground
               ))
             cursorRange

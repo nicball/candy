@@ -18,6 +18,7 @@ module Document
   , charBreaker
   , wordBreaker
   , countBreaks
+  , lastCharOffset
   ) where
 
 import Data.Foldable (fold)
@@ -33,6 +34,7 @@ import Data.Text (Text)
 data Document = Document
   { lines :: Seq Text
   }
+  deriving Show
 
 data Coord = Coord { line :: Int, column :: Int }
   deriving (Show, Eq, Ord)
@@ -46,23 +48,60 @@ subIv :: Iv -> Iv -> Bool
 subIv (Iv a b) (Iv c d) = c <= a && b <= d
 -}
 
-empty :: Document
-empty = Document . Seq.singleton $ ""
+inIv :: Coord -> Iv -> Bool
+inIv c (Iv b e) = b <= c && c < e
 
-patch :: Iv -> Text -> Document -> Document
-patch (Iv (Coord bline bcol) (Coord eline ecol)) text doc
-  | bline > eline = doc
-  | otherwise = Document $ combineLines before (combineLines (toLines text) after)
+empty :: Document
+empty = Document . Seq.singleton $ "\n"
+
+sanitizeCoord :: Document -> Coord -> Coord
+sanitizeCoord doc c =
+  if c.line == numLines
+  then Coord (c.line - 1) (lastCharOffset (getLastLine doc.lines))
+  else
+    if c.column < Text.lengthWord8 lineText
+    then c
+    else
+      if c.line == numLines - 1
+      then c { column = lastCharOffset lineText }
+      else Coord (c.line + 1) 0
   where
+    lineText = Document.getLine c.line doc
+    numLines = countLines doc
+
+sanitizeLines :: Seq Text -> Seq Text
+sanitizeLines lns = case Seq.viewr lns of
+  as Seq.:> a
+    | a == "" -> sanitizeLines as
+    | otherwise -> lns
+  Seq.EmptyR -> Seq.singleton "\n"
+
+patch :: Iv -> Text -> Document -> (Document, Coord -> Coord)
+patch iv@(Iv (Coord bline bcol) (Coord eline ecol)) text doc
+  | bline > eline = undefined
+  | otherwise = (newDoc, patchCoord)
+  where
+    newDoc = Document . sanitizeLines . combineLines before . combineLines textLines $ after
     before = Seq.take bline doc.lines <> Seq.singleton prefix
     after = (if Text.null suffix then Seq.empty else Seq.singleton suffix) <> Seq.drop (eline + 1) doc.lines
     prefix = Text.takeWord8 (fromIntegral bcol) . fromJust . Seq.lookup bline $ doc.lines
     suffix = Text.dropWord8 (fromIntegral ecol) . fromJust . Seq.lookup eline $ doc.lines
+    textLines = toLines text
+    numLines = Seq.length textLines
+    patchEndCoord = Coord (bline + numLines - 1) (Text.lengthWord8 (getLastLine textLines) + if numLines == 1 then bcol else 0)
+    patchCoord c
+      | c < iv.begin = c
+      | c `inIv` iv = sanitizeCoord newDoc patchEndCoord
+      | iv.end <= c =
+        if c.line == iv.end.line
+        then Coord patchEndCoord.line (c.column - ecol + patchEndCoord.column)
+        else c { line = c.line - iv.end.line + patchEndCoord.line }
+      | otherwise = undefined
 
 extract :: Iv -> Document -> Text
 extract (Iv (Coord bline bcol) (Coord eline ecol)) doc
   | bline == eline = Text.dropWord8 (fromIntegral bcol) . Text.takeWord8 (fromIntegral ecol) . fromJust . Seq.lookup bline $ doc.lines
-  | bline > eline = ""
+  | bline > eline = undefined
   | otherwise = firstLine <> wholeLines <> lastLine
   where
     firstLine = Text.dropWord8 (fromIntegral bcol) . fromJust . Seq.lookup bline $ doc.lines
@@ -106,10 +145,15 @@ toText doc = fold doc.lines
 toLines :: Text -> Seq Text
 toLines text = fmap (<> "\n") initLines <> lastLines
   where
-    lastLines = maybe Seq.empty (\(_, end) -> if end == '\n' then Seq.empty else Seq.singleton lastLine) . Text.unsnoc $ text
+    lastLines = maybe (Seq.singleton "") (\(_, end) -> if end == '\n' then Seq.empty else Seq.singleton lastLine) . Text.unsnoc $ text
     (initLines, lastLine) = case Seq.viewr . Seq.fromList . Text.splitOn "\n" $ text of
       s Seq.:> a -> (s, a)
       Seq.EmptyR -> undefined
+
+getLastLine :: Seq Text -> Text
+getLastLine lns= case Seq.viewr lns of
+  Seq.EmptyR -> undefined
+  _ Seq.:> l -> l
 
 combineLines :: Seq Text -> Seq Text -> Seq Text
 combineLines Seq.Empty a = a
@@ -161,3 +205,6 @@ wordBreaker = ICU.breakWord ICU.Current
 
 countBreaks :: ICU.Breaker a -> Text -> Int
 countBreaks breaker = Prelude.length . ICU.breaks breaker
+
+lastCharOffset :: Text -> Int
+lastCharOffset = Text.lengthWord8 . ICU.brkPrefix . last . ICU.breaks charBreaker
