@@ -15,6 +15,8 @@ module Selection
   , selectToWordStart
   , selectToWordBegin
   , expandToLine
+  , turnLeft
+  , turnRight
   ) where
 
 import Data.Char qualified as Char
@@ -143,6 +145,14 @@ expandToLine doc sel =
   if sel.anchor <= sel.mark
   then Selection (Coord sel.anchor.line 0) (Coord sel.mark.line (lastCharOffset (Document.getLine sel.mark.line doc)))
   else Selection (Coord sel.anchor.line (lastCharOffset (Document.getLine sel.anchor.line doc))) (Coord sel.mark.line 0)
+
+turnLeft :: Selection -> Selection
+turnLeft (Selection anchor mark) | anchor < mark = Selection mark anchor
+turnLeft sel = sel
+
+turnRight :: Selection -> Selection
+turnRight (Selection anchor mark) | mark < anchor = Selection mark anchor
+turnRight sel = sel
 
 breakEndCoord :: (ICU.Break a, Coord) -> Coord
 breakEndCoord (brk, Coord line col) = Coord line (col + lastCharOffset (ICU.brkBreak brk))

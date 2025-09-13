@@ -9,7 +9,7 @@ import Data.Function (fix)
 
 import GL (withGLFW, withWindow, getSlot, setSlot, viewportSlot, Viewport(..), Resolution(..))
 import Config (Config(..), FaceID(..), Color(..))
-import Window (flush, withDefaultWindowManager, withDemoWindow, WindowManager(registerWindow), scroll, sendKey)
+import Window (flush, withDefaultWindowManager, withDemoWindow, WindowManager(registerWindow), scroll, sendKey, sendChar)
 
 config :: Config
 config = Config
@@ -54,6 +54,7 @@ main = do
           when (state /= GLFW.KeyState'Released) do
             sendKey key mods wm
             redraw wm win
+        GLFW.setCharCallback win . Just $ \_ char -> sendChar char wm >> redraw wm win
 
         fix \loop -> do
           GLFW.waitEvents
