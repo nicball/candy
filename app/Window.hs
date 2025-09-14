@@ -30,7 +30,7 @@ import Graphics.UI.GLFW qualified as GLFW
 import Config (Config(..), Color(..), FaceID(..))
 import Document (Document, Coord(..))
 import Document qualified
-import GL (drawQuadColor, drawQuadTexture, renderToTexture, withQuadRenderer, QuadRenderer, Resolution(..), getSlot, Viewport(..), viewportSlot)
+import GL (drawQuadColor, drawQuadTexture, renderToTexture, withQuadRenderer, QuadRenderer, Resolution(..), getSlot, setSlot, Viewport(..), viewportSlot)
 import Raqm qualified
 import Selection qualified
 import Selection (Selection(..))
@@ -97,7 +97,8 @@ flush res@(Resolution w h) dwm = do
       drawQuadTexture dwm.quadRenderer res tex margin (h - 1 - margin) margin (w - 1 - margin)
 
 data DemoWindow = DemoWindow
-  { screenPos :: IORef Int
+  { screenXPos :: IORef Int
+  , screenYPos :: IORef Int
   , weaver :: Weaver
   , document :: IORef Document
   , mode :: IORef Mode
@@ -113,7 +114,8 @@ data Mode = Normal | Insert
 
 withDemoWindow :: Config -> (DemoWindow -> IO a) -> IO a
 withDemoWindow config action = do
-  screenPos <- newIORef 0
+  screenXPos <- newIORef 0
+  screenYPos <- newIORef 0
   document <- newIORef . Document.fromText =<< Text.readFile "./app/Window.hs"
   selection <- newIORef (Selection (Coord 0 0) (Coord 0 0))
   mode <- newIORef Normal
@@ -124,9 +126,9 @@ withDemoWindow config action = do
       action DemoWindow{..}
 
 instance Scroll DemoWindow where
-  scroll _ y DemoWindow{screenPos, weaver} = do
+  scroll _ y DemoWindow{screenYPos, weaver} = do
     height <- getLineHeight weaver
-    modifyIORef screenPos (max 0 . (\p -> p - truncate y * height))
+    modifyIORef screenYPos (max 0 . (\p -> p - truncate y * height))
 
 pattern GMKNone :: GLFW.ModifierKeys
 pattern GMKNone <- GLFW.ModifierKeys { modifierKeysControl = False, modifierKeysShift = False, modifierKeysAlt = False }
@@ -152,18 +154,7 @@ instance SendKey DemoWindow where
             doc <- readIORef dw.document
             newSel <- if sel.mark.line /= Document.countLines doc - 1
               then do
-                let
-                  getTarget = do
-                    let line = Document.getLine sel.mark.line doc
-                    rq <- layoutTextCached dw.config.face . stripNewLine $ line
-                    after <- if sel.mark.column == Text.lengthWord8 line - 1
-                      then (+ dw.config.face.sizePx `div` 2) <$> if sel.mark.column == 0 then pure 0 else Raqm.indexToXPosition rq (sel.mark.column - 1)
-                      else Raqm.indexToXPosition rq sel.mark.column
-                    before <- if sel.mark.column == 0
-                      then pure 0
-                      else Raqm.indexToXPosition rq (sel.mark.column - 1)
-                    pure $ (before + after) `div` 2
-                target <- maybe getTarget pure sel.target
+                target <- maybe (getTarget doc sel.mark) pure sel.target
                 let nextLine = stripNewLine . Document.getLine (sel.mark.line + 1) $ doc
                 newCol <- if nextLine == "" then pure 0 else do
                   rqNext <- layoutTextCached dw.config.face nextLine
@@ -178,18 +169,7 @@ instance SendKey DemoWindow where
             doc <- readIORef dw.document
             newSel <- if sel.mark.line /= 0
               then do
-                let
-                  getTarget = do
-                    let line = Document.getLine sel.mark.line doc
-                    rq <- layoutTextCached dw.config.face . stripNewLine $ line
-                    after <- if sel.mark.column == Text.lengthWord8 line - 1
-                      then (+ dw.config.face.sizePx `div` 2) <$> if sel.mark.column == 0 then pure 0 else Raqm.indexToXPosition rq (sel.mark.column - 1)
-                      else Raqm.indexToXPosition rq sel.mark.column
-                    before <- if sel.mark.column == 0
-                      then pure 0
-                      else Raqm.indexToXPosition rq (sel.mark.column - 1)
-                    pure $ (before + after) `div` 2
-                target <- maybe getTarget pure sel.target
+                target <- maybe (getTarget doc sel.mark) pure sel.target
                 let prevLine = stripNewLine . Document.getLine (sel.mark.line - 1) $ doc
                 newCol <- if prevLine == "" then pure 0 else do
                   rqPrev <- layoutTextCached dw.config.face prevLine
@@ -259,16 +239,33 @@ instance SendKey DemoWindow where
     where
       ext c m = if c then Selection.extend m else m
       ensureCursorRangeOnScreen = do
-        Coord ln _ <- (.mark) <$> readIORef dw.selection
+        sel <- readIORef dw.selection
+        doc <- readIORef dw.document
         height <- getLineHeight dw.weaver
-        let markPos = height * ln
-        screenPos <- readIORef dw.screenPos
-        Viewport _ _ _ screenHeight <- getSlot viewportSlot
+        let markYPos = height * sel.mark.line
+        markXPos <- getTarget doc sel.mark
+        screenYPos <- readIORef dw.screenYPos
+        screenXPos <- readIORef dw.screenXPos
+        Viewport _ _ screenWidth screenHeight <- getSlot viewportSlot
         let
-          (topRange, bottomRange) = dw.config.cursorRangeOnScreen
-          maxScreenPos = markPos - truncate (fromIntegral screenHeight * topRange)
-          minScreenPos = markPos + height + truncate (fromIntegral screenHeight * (1 - bottomRange)) - screenHeight
-        writeIORef dw.screenPos . max 0 . min maxScreenPos . max minScreenPos $ screenPos
+          (topRange, bottomRange) = dw.config.cursorVerticalRangeOnScreen
+          maxScreenYPos = markYPos - truncate (fromIntegral screenHeight * topRange)
+          minScreenYPos = markYPos - truncate (fromIntegral screenHeight * bottomRange) + height
+          (leftRange, rightRange) = dw.config.cursorHorizontalRangeOnScreen
+          maxScreenXPos = markXPos - truncate (fromIntegral screenWidth * leftRange)
+          minScreenXPos = markXPos - truncate (fromIntegral screenWidth * rightRange)
+        writeIORef dw.screenYPos . max 0 . min maxScreenYPos . max minScreenYPos $ screenYPos
+        writeIORef dw.screenXPos . max 0 . min maxScreenXPos . max minScreenXPos $ screenXPos
+      getTarget doc mark = do
+        let line = Document.getLine mark.line doc
+        rq <- layoutTextCached dw.config.face . stripNewLine $ line
+        after <- if mark.column == Text.lengthWord8 line - 1
+          then (+ dw.config.face.sizePx `div` 2) <$> if mark.column == 0 then pure 0 else Raqm.indexToXPosition rq (mark.column - 1)
+          else Raqm.indexToXPosition rq mark.column
+        before <- if mark.column == 0
+          then pure 0
+          else Raqm.indexToXPosition rq (mark.column - 1)
+        pure $ (before + after) `div` 2
 
 instance SendChar DemoWindow where
   sendChar char dw = eatFirstChar do
@@ -291,17 +288,25 @@ instance Window DemoWindow where
     let Color{..} = dw.config.background in
       glClearColor red green blue alpha
     glClear GL_COLOR_BUFFER_BIT
+    Viewport 0 0 screenWidth screenHeight <- getSlot viewportSlot
     document <- readIORef dw.document
     height <- getLineHeight dw.weaver
+    let lineNumberMargin = 10
+    digitWidth <- (`div` 64) . (.xAdvance) . (!! 0) <$> (Raqm.getGlyphs =<< layoutTextCached dw.config.face "0")
+    let lineNumberWidth = (+ 2 * lineNumberMargin) . (* digitWidth) . max 1 . ceiling . logBase 10 . (+ 1) . (fromIntegral :: Int -> Double) . Document.countLines $ document
+    drawQuadColor dw.quadRenderer res dw.config.lineNumbersBackground 0 (screenHeight - 1) lineNumberMargin (lineNumberWidth - lineNumberMargin - 1)
+    let textRes = Resolution (screenWidth - lineNumberWidth) screenHeight
     descender <- getDescender dw.weaver
-    beginPos <- readIORef dw.screenPos
+    screenYPos <- readIORef dw.screenYPos
+    screenXPos <- readIORef dw.screenXPos
     let
-      beginLine = beginPos `div` height
-      linePos idx = height * (idx + 1) + descender - beginPos
+      beginLine = screenYPos `div` height
+      linePos idx = height * (idx + 1) + descender - screenYPos
       numLines = res.h `divSat` height
       divSat a b = let (r, m) = divMod a b in if m /= 0 then r + 1 else r
     sel <- readIORef dw.selection
     forM_ [ beginLine, beginLine + 1 .. min (beginLine + numLines) (Document.countLines document - 1) ] \idx -> do
+      setSlot viewportSlot $ Viewport lineNumberWidth 0 (screenWidth - lineNumberWidth) screenHeight
       let y = linePos idx
       let ln = stripNewLine . Document.getLine idx $ document
       let selRange = maybeToList . Selection.selAtLine document sel $ idx
@@ -312,7 +317,7 @@ instance Window DemoWindow where
               , dw.config.primarySelectionForeground
               ))
             selRange
-      let cursorRange = if idx /= sel.mark.line then [] else [ sel.mark.column ]
+      let cursorRange = [ sel.mark.column | idx == sel.mark.line ]
       let cursorColorSpec = fmap
             (\pos ->
               ( pos
@@ -328,10 +333,11 @@ instance Window DemoWindow where
         xEnd <- if end == Text.lengthWord8 ln
           then (+ dw.config.face.sizePx `div` 2) <$> if end == 0 then pure 0 else Raqm.indexToXPosition rq (end - 1)
           else Raqm.indexToXPosition rq end
-        drawQuadColor dw.quadRenderer res color (y - descender - height) (y - descender) (50 + xStart) (50 + xEnd)
-      drawText dw.weaver res 5 y [(0, 100, dw.config.foreground)] (Text.pack (show idx))
+        drawQuadColor dw.quadRenderer textRes color (y - descender - height) (y - descender) (xStart - screenXPos) (xEnd - screenXPos)
+      drawText dw.weaver textRes (-screenXPos) y (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 ln, dw.config.foreground)]) ln
       -- let rainbow = fmap (\(n, c) -> (n, n + 1, c)) . zip [0 ..] . cycle $ [ Color 0.93 0.94 0.96 1, Color 0.53 0.75 0.82 1, Color 0.37 0.51 0.67 1, Color 0.75 0.38 0.42 1, Color 0.86 0.53 0.44 1, Color 0.92 0.80 0.55 1, Color 0.64 0.75 0.55 1, Color 0.71 0.56 0.68 1 ]
-      drawText dw.weaver res 50 y (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 ln, dw.config.foreground)]) ln
+      setSlot viewportSlot $ Viewport 0 0 screenWidth screenHeight
+      drawText dw.weaver res lineNumberMargin y [(0, 100, dw.config.lineNumbersForeground)] (Text.pack (show idx))
 
 stripNewLine :: Text -> Text
 stripNewLine t = if "\n" `Text.isSuffixOf` t then Text.dropEnd 1 t else t
