@@ -1,7 +1,7 @@
-{-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Selection
-  ( Selection(..)
+  ( Selection(.., Selection)
   , alternate
   , selMin
   , selMax
@@ -28,8 +28,13 @@ import Data.Text qualified as Text
 import Document (breakAfterCoord, breakBeforeCoord, charBreaker, countBreaks, moveCoord, wordBreaker, Coord(..), Document, lastCharOffset, Iv(..), countLines, lastCharOffset, charLengthAt)
 import Document qualified
 
-data Selection = Selection { anchor :: Coord, mark :: Coord }
+data Selection = SelectionWithTarget { anchor :: Coord, mark :: Coord, target :: Maybe Int }
   deriving Show
+
+{-# COMPLETE Selection #-}
+pattern Selection :: Coord -> Coord -> Selection
+pattern Selection anchor mark <- SelectionWithTarget anchor mark _
+  where Selection a m = SelectionWithTarget a m Nothing
 
 alternate :: Selection -> Selection
 alternate (Selection a b) = Selection b a
@@ -64,7 +69,7 @@ selAtLine _ (Selection (Coord aln acol) (Coord mln mcol)) ln | aln == mln =
     then Just (min acol mcol, max acol mcol)
     else Nothing
 selAtLine doc sel ln = if
-  | bln == ln -> Just (bcol, (lastCharOffset . Document.getLine bln $ doc))
+  | bln == ln -> Just (bcol, lastCharOffset . Document.getLine bln $ doc)
   | bln < ln && ln < eln -> Just (0, lastCharOffset . Document.getLine ln $ doc)
   | ln == eln -> Just (0, ecol)
   | otherwise -> Nothing
@@ -85,7 +90,7 @@ moveLeft doc sel = Selection c c
   where c = moveCoord doc (-1) sel.mark
 
 selectToWordEnd :: Movement
-selectToWordEnd doc Selection{mark = curr} =
+selectToWordEnd doc SelectionWithTarget{mark = curr} =
   case findAnchor . breakAfterCoord wordBreaker doc $ curr of
     Nothing -> Selection curr curr
     Just anchor -> Selection anchor . breakEndCoord . findMark . breakAfterCoord wordBreaker doc $ anchor
@@ -103,7 +108,7 @@ selectToWordEnd doc Selection{mark = curr} =
     findMark [] = undefined
 
 selectToWordStart :: Movement
-selectToWordStart doc Selection{mark = curr} =
+selectToWordStart doc SelectionWithTarget{mark = curr} =
   case findAnchor . breakAfterCoord wordBreaker doc $ curr of
     Nothing -> Selection curr curr
     Just anchor -> Selection anchor . breakEndCoord . findMark . breakAfterCoord wordBreaker doc $ anchor
@@ -120,7 +125,7 @@ selectToWordStart doc Selection{mark = curr} =
     findMark [] = undefined
 
 selectToWordBegin :: Movement
-selectToWordBegin doc Selection{mark = curr} =
+selectToWordBegin doc SelectionWithTarget{mark = curr} =
   case findAnchor . breakBeforeCoord wordBreaker doc . forceNext $ curr of
     Nothing -> Selection curr curr
     Just anchor -> case findMark . breakBeforeCoord wordBreaker doc . forceNext $ anchor of

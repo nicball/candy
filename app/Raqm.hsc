@@ -21,6 +21,7 @@ module Raqm
   , getGlyphs
   , Glyph(..)
   , indexToPosition
+  , indexToXPosition
   , positionToIndex
   ) where
 
@@ -28,6 +29,7 @@ module Raqm
 
 import Control.Exception (Exception, throwIO, finally)
 import Data.Text.Foreign qualified as Text
+import Data.Text qualified as Text
 import Data.Text (Text)
 import Data.Word
 import Foreign.C.String qualified as C
@@ -43,7 +45,7 @@ data Raqm_
 data RaqmError = RaqmError Text deriving (Show, Exception)
 
 checkBool :: Text -> Bool -> IO ()
-checkBool msg False = throwIO (RaqmError msg)
+checkBool msg False = throwIO . RaqmError $ msg
 checkBool _ True = pure ()
 
 foreign import ccall "raqm_create"
@@ -151,6 +153,9 @@ indexToPosition rq pos =
       alloca $ \py -> do
         checkBool "indexToPosition" =<< indexToPosition_ rq ppos px py
         (,,) <$> (fromIntegral <$> peek ppos) <*> (fromIntegral . (`div` 64) <$> peek px) <*> (fromIntegral . (`div` 64) <$> peek py)
+
+indexToXPosition :: Raqm -> Int -> IO Int
+indexToXPosition = fmap (fmap (fmap (\(_, x, _) -> x))) indexToPosition
 
 foreign import ccall "raqm_position_to_index"
   positionToIndex_ :: Raqm -> C.CInt -> C.CInt -> C.Ptr C.CSize -> IO Bool

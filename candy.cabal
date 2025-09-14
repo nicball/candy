@@ -107,4 +107,5 @@ executable candy
     ImportQualifiedPost,
     OverloadedRecordDot,
     NoFieldSelectors,
-    DuplicateRecordFields
+    DuplicateRecordFields,
+    MultiWayIf

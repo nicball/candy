@@ -1,7 +1,6 @@
 {-# LANGUAGE DerivingStrategies
            , DeriveAnyClass
            , FunctionalDependencies
-           , TemplateHaskell
            , QuasiQuotes
            #-}
 

@@ -55,24 +55,19 @@ empty :: Document
 empty = Document . Seq.singleton $ "\n"
 
 sanitizeCoord :: Document -> Coord -> Coord
-sanitizeCoord doc c =
-  if c.line == numLines
-  then Coord (c.line - 1) (lastCharOffset (getLastLine doc.lines))
-  else
-    if c.column < Text.lengthWord8 lineText
-    then c
-    else
-      if c.line == numLines - 1
-      then c { column = lastCharOffset lineText }
-      else Coord (c.line + 1) 0
+sanitizeCoord doc c
+  | c.line >= numLines = Coord (c.line - 1) (lastCharOffset (getLastLine doc.lines))
+  | c.column < Text.lengthWord8 lineText = c
+  | c.line == numLines - 1 =  c { column = lastCharOffset lineText }
+  | otherwise = Coord (c.line + 1) 0
   where
     lineText = Document.getLine c.line doc
     numLines = countLines doc
 
-sanitizeLines :: Seq Text -> Seq Text
-sanitizeLines lns = case Seq.viewr lns of
+closeLines :: Seq Text -> Seq Text
+closeLines lns = case Seq.viewr lns of
   as Seq.:> a
-    | a == "" -> sanitizeLines as
+    | a == "" -> closeLines as
     | otherwise -> lns
   Seq.EmptyR -> Seq.singleton "\n"
 
@@ -81,12 +76,12 @@ patch iv@(Iv (Coord bline bcol) (Coord eline ecol)) text doc
   | bline > eline = undefined
   | otherwise = (newDoc, patchCoord)
   where
-    newDoc = Document . sanitizeLines . combineLines before . combineLines textLines $ after
+    newDoc = Document . closeLines . combineLines before . combineLines textLines $ after
     before = Seq.take bline doc.lines <> Seq.singleton prefix
     after = (if Text.null suffix then Seq.empty else Seq.singleton suffix) <> Seq.drop (eline + 1) doc.lines
     prefix = Text.takeWord8 (fromIntegral bcol) . fromJust . Seq.lookup bline $ doc.lines
     suffix = Text.dropWord8 (fromIntegral ecol) . fromJust . Seq.lookup eline $ doc.lines
-    textLines = toLines text
+    textLines = toOpenLines text
     numLines = Seq.length textLines
     patchEndCoord = Coord (bline + numLines - 1) (Text.lengthWord8 (getLastLine textLines) + if numLines == 1 then bcol else 0)
     patchCoord c
@@ -133,19 +128,20 @@ moveCoord document offset coord =
     then forward offset
     else backward (-offset)
   where
-    forward n = indexSatDef coord (snd <$> breakAfterCoord charBreaker document coord) n
+    forward = indexSatDef coord (snd <$> breakAfterCoord charBreaker document coord)
     backward n = indexSatDef coord (snd <$> breakBeforeCoord charBreaker document coord) (n - 1)
 
 fromText :: Text -> Document
-fromText = Document <$> toLines
+fromText = Document <$> closeLines . toOpenLines
 
 toText :: Document -> Text
 toText doc = fold doc.lines
 
-toLines :: Text -> Seq Text
-toLines text = fmap (<> "\n") initLines <> lastLines
+toOpenLines :: Text -> Seq Text
+toOpenLines text = fmap (<> "\n") initLines <> lastLines
   where
-    lastLines = maybe (Seq.singleton "") (\(_, end) -> if end == '\n' then Seq.empty else Seq.singleton lastLine) . Text.unsnoc $ text
+    -- lastLines = maybe (Seq.singleton "") (\(_, end) -> if end == '\n' then Seq.empty else Seq.singleton lastLine) . Text.unsnoc $ text
+    lastLines = Seq.singleton lastLine
     (initLines, lastLine) = case Seq.viewr . Seq.fromList . Text.splitOn "\n" $ text of
       s Seq.:> a -> (s, a)
       Seq.EmptyR -> undefined
@@ -188,7 +184,7 @@ breakBeforeCoord breaker doc (Coord line col) =
       . fromJust
       . Seq.lookup line
       $ doc.lines
-    restDoc = fold . Seq.reverse . Seq.mapWithIndex (\idx text -> breakLine idx text). Seq.take line $ doc.lines
+    restDoc = fold . Seq.reverse . Seq.mapWithIndex breakLine . Seq.take line $ doc.lines
     breakLine idx = reverse . fmap (\brk -> (brk, Coord idx (Text.lengthWord8 (ICU.brkPrefix brk)))) . ICU.breaks breaker
 
 indexSatDef :: a -> [a] -> Int -> a

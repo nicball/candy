@@ -1,6 +1,5 @@
 {-# LANGUAGE DeriveAnyClass
            , DerivingStrategies
-           , TemplateHaskell
            , QuasiQuotes
            #-}
 
@@ -127,7 +126,7 @@ drawText weaver res originX originY colorspec text = do
           let
             xOffset = fromIntegral . (`div` 64) $ glyph.xOffset
             yOffset = fromIntegral . (`div` 64) $ glyph.yOffset
-            xAdvance = fromIntegral $ glyph.xAdvance
+            xAdvance = fromIntegral glyph.xAdvance
             x = (penX `div` 64) + rg.leftBearing + xOffset + originX
             y = -rg.topBearing + rg.height - yOffset + originY
             cluster = fromIntegral glyph.cluster
