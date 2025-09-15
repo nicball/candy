@@ -11,8 +11,8 @@ module Window
   , withDefaultWindowManager
 
   -- demo
-  , DemoWindow(..)
-  , withDemoWindow
+  , EditorWindow(..)
+  , withEditorWindow
   , flush
   ) where
 
@@ -35,6 +35,8 @@ import Raqm qualified
 import Selection qualified
 import Selection (Selection(..))
 import Weaver (Weaver, getLineHeight, getDescender, layoutTextCached, drawText, withWeaver)
+
+import Data.List (partition)
 
 class Scroll a where
   scroll :: Double -> Double -> a -> IO ()
@@ -85,7 +87,7 @@ instance WindowManager DefaultWindowManager where
     modifyIORef dwm.windows (IntMap.insert wid (WindowInfo w False))
     pure (WindowID wid)
   needRedraw (WindowID wid) dwm = do
-    modifyIORef dwm.windows (IntMap.alter (\case { Just wi -> Just wi { needRedraw = True }; Nothing -> Nothing; }) wid)
+    modifyIORef dwm.windows (IntMap.alter (fmap (\wi -> wi { needRedraw = True })) wid)
 
 flush :: Resolution -> DefaultWindowManager -> IO ()
 flush res@(Resolution w h) dwm = do
@@ -96,37 +98,35 @@ flush res@(Resolution w h) dwm = do
     WindowInfo win _ -> renderToTexture texRes (drawWindow texRes win) \tex -> do
       drawQuadTexture dwm.quadRenderer res tex margin (h - 1 - margin) margin (w - 1 - margin)
 
-data DemoWindow = DemoWindow
+data EditorWindow = EditorWindow
   { screenXPos :: IORef Int
   , screenYPos :: IORef Int
   , weaver :: Weaver
-  , document :: IORef Document
-  , mode :: IORef Mode
-  , eatFirstChar :: IORef Bool
-  , insertExitCallback :: IORef (IO ())
-  , selection :: IORef Selection
-  , config :: Config
+  , context :: Context
+  , keyMatchState :: IORef KeyCandidates
   , quadRenderer :: QuadRenderer
   }
 
-data Mode = Normal | Insert
+data Mode = NormalMode | InsertMode
   deriving Eq
 
-withDemoWindow :: Config -> (DemoWindow -> IO a) -> IO a
-withDemoWindow config action = do
+withEditorWindow :: Config -> (EditorWindow -> IO a) -> IO a
+withEditorWindow config action = do
   screenXPos <- newIORef 0
   screenYPos <- newIORef 0
   document <- newIORef . Document.fromText =<< Text.readFile "./app/Window.hs"
   selection <- newIORef (Selection (Coord 0 0) (Coord 0 0))
-  mode <- newIORef Normal
+  mode <- newIORef NormalMode
   eatFirstChar <- newIORef False
   insertExitCallback <- newIORef (pure ())
+  let context = Context{..}
+  keyMatchState <- newIORef normalKeymap.candidates
   withWeaver config \weaver -> do
     withQuadRenderer \quadRenderer -> do
-      action DemoWindow{..}
+      action EditorWindow{..}
 
-instance Scroll DemoWindow where
-  scroll _ y DemoWindow{screenYPos, weaver} = do
+instance Scroll EditorWindow where
+  scroll _ y EditorWindow{screenYPos, weaver} = do
     height <- getLineHeight weaver
     modifyIORef screenYPos (max 0 . (\p -> p - truncate y * height))
 
@@ -139,162 +139,89 @@ pattern GMKShift s <- GLFW.ModifierKeys { modifierKeysControl = False, modifierK
 pattern GMKAlt :: Bool -> GLFW.ModifierKeys
 pattern GMKAlt s <- GLFW.ModifierKeys { modifierKeysControl = False, modifierKeysShift = False, modifierKeysAlt = s }
 
-instance SendKey DemoWindow where
+instance SendKey EditorWindow where
   sendKey key mods dw = do
-    readIORef dw.mode >>= \case
-      Normal -> do
-        case (mods, key) of
-          (GMKShift s, GLFW.Key'H) -> modifyIORef dw.selection . ext s Selection.moveLeft =<< readIORef dw.document
-          (GMKShift s, GLFW.Key'L) -> modifyIORef dw.selection . ext s Selection.moveRight =<< readIORef dw.document
-          (GMKShift s, GLFW.Key'E) -> modifyIORef dw.selection . ext s Selection.selectToWordEnd =<< readIORef dw.document
-          (GMKShift s, GLFW.Key'B) -> modifyIORef dw.selection . ext s Selection.selectToWordBegin =<< readIORef dw.document
-          (GMKShift s, GLFW.Key'W) -> modifyIORef dw.selection . ext s Selection.selectToWordStart =<< readIORef dw.document
-          (GMKShift s, GLFW.Key'J) -> do
-            sel <- readIORef dw.selection
-            doc <- readIORef dw.document
-            newSel <- if sel.mark.line /= Document.countLines doc - 1
-              then do
-                target <- maybe (getTarget doc sel.mark) pure sel.target
-                let nextLine = stripNewLine . Document.getLine (sel.mark.line + 1) $ doc
-                newCol <- if nextLine == "" then pure 0 else do
-                  rqNext <- layoutTextCached dw.config.face nextLine
-                  col <- Raqm.positionToIndex rqNext target 0
-                  pure $ min col (Document.lastCharOffset nextLine)
-                let newMark = Coord (sel.mark.line + 1) newCol
-                pure $ SelectionWithTarget newMark newMark (Just target)
-              else pure $ Selection sel.mark sel.mark
-            modifyIORef dw.selection . ext s (\_ _ -> newSel) $ doc
-          (GMKShift s, GLFW.Key'K) -> do
-            sel <- readIORef dw.selection
-            doc <- readIORef dw.document
-            newSel <- if sel.mark.line /= 0
-              then do
-                target <- maybe (getTarget doc sel.mark) pure sel.target
-                let prevLine = stripNewLine . Document.getLine (sel.mark.line - 1) $ doc
-                newCol <- if prevLine == "" then pure 0 else do
-                  rqPrev <- layoutTextCached dw.config.face prevLine
-                  col <- Raqm.positionToIndex rqPrev target 0
-                  pure $ min col (Document.lastCharOffset prevLine)
-                let newMark = Coord (sel.mark.line - 1) newCol
-                pure $ SelectionWithTarget newMark newMark (Just target)
-              else pure $ Selection sel.mark sel.mark
-            modifyIORef dw.selection . ext s (\_ _ -> newSel) $ doc
-          (GMKNone, GLFW.Key'X) -> modifyIORef dw.selection . Selection.expandToLine =<< readIORef dw.document
-          (GMKNone, GLFW.Key'D) -> do
-            sel <- readIORef dw.selection
-            doc <- readIORef dw.document
-            let (newDoc, translate) = Document.patch (Selection.selToIv doc sel) "" doc
-            writeIORef dw.document newDoc
-            writeIORef dw.selection $ Selection (translate sel.anchor) (translate sel.mark)
-          (GMKNone, GLFW.Key'I) -> do
-            modifyIORef dw.selection Selection.turnLeft
-            writeIORef dw.eatFirstChar True
-            writeIORef dw.mode Insert
-          (GMKNone, GLFW.Key'A) -> do
-            modifyIORef dw.selection Selection.turnRight
-            sel <- readIORef dw.selection
-            doc <- readIORef dw.document
-            when (sel.mark == Document.endOfDocument doc) do
-              let
-                len = Document.charLengthAt doc sel.mark
-                c = sel.mark { column = sel.mark.column + len }
-              modifyIORef dw.document (fst . Document.patch (Document.Iv c c) "\n")
-            doc' <- readIORef dw.document
-            writeIORef dw.selection sel { mark = Document.moveCoord doc' 1 sel.mark }
-            writeIORef dw.eatFirstChar True
-            writeIORef dw.mode Insert
-          (GMKShift True, GLFW.Key'5) -> do
-            doc <- readIORef dw.document
-            writeIORef dw.selection (Selection (Coord 0 0) (Document.endOfDocument doc))
-          (GMKAlt True, GLFW.Key'Semicolon) -> modifyIORef dw.selection Selection.alternate
-          (GMKNone, GLFW.Key'Semicolon) -> modifyIORef dw.selection \sel -> sel { anchor = sel.mark }
-          _ -> pure ()
-      Insert -> do
+    readIORef dw.context.mode >>= \case
+      NormalMode -> do
+        (cmds, cands) <- updateKeyCandidates (mods, key) <$> readIORef dw.keyMatchState
+        case cmds of
+          [] -> writeIORef dw.keyMatchState (if null cands then normalKeymap.candidates else cands)
+          [cmd] -> cmd dw.context >> writeIORef dw.keyMatchState normalKeymap.candidates
+          _ -> error "invalid keymap"
+      InsertMode -> do
         case (mods, key) of
           (GMKNone, GLFW.Key'Escape) -> do
-            join $ readIORef dw.insertExitCallback
-            writeIORef dw.insertExitCallback (pure ())
-            writeIORef dw.mode Normal
+            join $ readIORef dw.context.insertExitCallback
+            writeIORef dw.context.insertExitCallback (pure ())
+            writeIORef dw.context.mode NormalMode
           (GMKNone, GLFW.Key'Backspace) -> do
-            sel <- readIORef dw.selection
-            doc <- readIORef dw.document
+            sel <- readIORef dw.context.selection
+            doc <- readIORef dw.context.document
             when (sel.mark /= Coord 0 0) do
               let
                 pos = Document.moveCoord doc (-1) sel.mark
                 (newDoc, translate) = Document.patch (Document.Iv pos sel.mark) "" doc
-              writeIORef dw.document newDoc
-              writeIORef dw.selection $ Selection (translate sel.anchor) (translate sel.mark)
+              writeIORef dw.context.document newDoc
+              writeIORef dw.context.selection $ Selection (translate sel.anchor) (translate sel.mark)
           (GMKNone, GLFW.Key'Delete) -> do
-            sel <- readIORef dw.selection
-            doc <- readIORef dw.document
+            sel <- readIORef dw.context.selection
+            doc <- readIORef dw.context.document
             when (sel.mark /= Document.endOfDocument doc) do
               let
                 len = Document.charLengthAt doc sel.mark
                 (newDoc, translate) = Document.patch (Document.Iv sel.mark sel.mark { column = sel.mark.column + len }) "" doc
-              writeIORef dw.document newDoc
-              writeIORef dw.selection $ Selection (translate sel.anchor) (translate sel.mark)
+              writeIORef dw.context.document newDoc
+              writeIORef dw.context.selection $ Selection (translate sel.anchor) (translate sel.mark)
           (GMKNone, GLFW.Key'Enter) -> sendChar '\n' dw
           _ -> pure ()
     ensureCursorRangeOnScreen
     where
-      ext c m = if c then Selection.extend m else m
       ensureCursorRangeOnScreen = do
-        sel <- readIORef dw.selection
-        doc <- readIORef dw.document
+        sel <- readIORef dw.context.selection
         height <- getLineHeight dw.weaver
         let markYPos = height * sel.mark.line
-        markXPos <- getTarget doc sel.mark
+        markXPos <- getTarget dw.context
         screenYPos <- readIORef dw.screenYPos
         screenXPos <- readIORef dw.screenXPos
         Viewport _ _ screenWidth screenHeight <- getSlot viewportSlot
         let
-          (topRange, bottomRange) = dw.config.cursorVerticalRangeOnScreen
+          (topRange, bottomRange) = dw.context.config.cursorVerticalRangeOnScreen
           maxScreenYPos = markYPos - truncate (fromIntegral screenHeight * topRange)
           minScreenYPos = markYPos - truncate (fromIntegral screenHeight * bottomRange) + height
-          (leftRange, rightRange) = dw.config.cursorHorizontalRangeOnScreen
+          (leftRange, rightRange) = dw.context.config.cursorHorizontalRangeOnScreen
           maxScreenXPos = markXPos - truncate (fromIntegral screenWidth * leftRange)
           minScreenXPos = markXPos - truncate (fromIntegral screenWidth * rightRange)
         writeIORef dw.screenYPos . max 0 . min maxScreenYPos . max minScreenYPos $ screenYPos
         writeIORef dw.screenXPos . max 0 . min maxScreenXPos . max minScreenXPos $ screenXPos
-      getTarget doc mark = do
-        let line = Document.getLine mark.line doc
-        rq <- layoutTextCached dw.config.face . stripNewLine $ line
-        after <- if mark.column == Text.lengthWord8 line - 1
-          then (+ dw.config.face.sizePx `div` 2) <$> if mark.column == 0 then pure 0 else Raqm.indexToXPosition rq (mark.column - 1)
-          else Raqm.indexToXPosition rq mark.column
-        before <- if mark.column == 0
-          then pure 0
-          else Raqm.indexToXPosition rq (mark.column - 1)
-        pure $ (before + after) `div` 2
 
-instance SendChar DemoWindow where
+instance SendChar EditorWindow where
   sendChar char dw = eatFirstChar do
-    readIORef dw.mode >>= \case
-      Normal -> pure ()
-      Insert -> do
-        sel <- readIORef dw.selection
-        doc <- readIORef dw.document
+    readIORef dw.context.mode >>= \case
+      NormalMode -> pure ()
+      InsertMode -> do
+        sel <- readIORef dw.context.selection
+        doc <- readIORef dw.context.document
         let (newDoc, translate) = Document.patch (Document.Iv sel.mark sel.mark) (Text.singleton char) doc
-        writeIORef dw.document newDoc
-        writeIORef dw.selection $ Selection (translate sel.anchor) (translate sel.mark)
+        writeIORef dw.context.document newDoc
+        writeIORef dw.context.selection $ Selection (translate sel.anchor) (translate sel.mark)
     where
       eatFirstChar action =
-        readIORef dw.eatFirstChar >>= \case
-          True -> writeIORef dw.eatFirstChar False
+        readIORef dw.context.eatFirstChar >>= \case
+          True -> writeIORef dw.context.eatFirstChar False
           False -> action
 
-instance Window DemoWindow where
+instance Window EditorWindow where
   drawWindow res dw = do
-    let Color{..} = dw.config.background in
+    let Color{..} = dw.context.config.background in
       glClearColor red green blue alpha
     glClear GL_COLOR_BUFFER_BIT
     Viewport 0 0 screenWidth screenHeight <- getSlot viewportSlot
-    document <- readIORef dw.document
+    document <- readIORef dw.context.document
     height <- getLineHeight dw.weaver
     let lineNumberMargin = 10
-    digitWidth <- (`div` 64) . (.xAdvance) . (!! 0) <$> (Raqm.getGlyphs =<< layoutTextCached dw.config.face "0")
+    digitWidth <- (`div` 64) . (.xAdvance) . (!! 0) <$> (Raqm.getGlyphs =<< layoutTextCached dw.context.config.face "0")
     let lineNumberWidth = (+ 2 * lineNumberMargin) . (* digitWidth) . max 1 . ceiling . logBase 10 . (+ 1) . (fromIntegral :: Int -> Double) . Document.countLines $ document
-    drawQuadColor dw.quadRenderer res dw.config.lineNumbersBackground 0 (screenHeight - 1) lineNumberMargin (lineNumberWidth - lineNumberMargin - 1)
+    drawQuadColor dw.quadRenderer res dw.context.config.lineNumbersBackground 0 (screenHeight - 1) lineNumberMargin (lineNumberWidth - lineNumberMargin - 1)
     let textRes = Resolution (screenWidth - lineNumberWidth) screenHeight
     descender <- getDescender dw.weaver
     screenYPos <- readIORef dw.screenYPos
@@ -304,7 +231,7 @@ instance Window DemoWindow where
       linePos idx = height * (idx + 1) + descender - screenYPos
       numLines = res.h `divSat` height
       divSat a b = let (r, m) = divMod a b in if m /= 0 then r + 1 else r
-    sel <- readIORef dw.selection
+    sel <- readIORef dw.context.selection
     forM_ [ beginLine, beginLine + 1 .. min (beginLine + numLines) (Document.countLines document - 1) ] \idx -> do
       setSlot viewportSlot $ Viewport lineNumberWidth 0 (screenWidth - lineNumberWidth) screenHeight
       let y = linePos idx
@@ -314,7 +241,7 @@ instance Window DemoWindow where
             (\(begin, end) ->
               ( begin
               , end + Document.charLengthAt document (Coord idx end)
-              , dw.config.primarySelectionForeground
+              , dw.context.config.primarySelectionForeground
               ))
             selRange
       let cursorRange = [ sel.mark.column | idx == sel.mark.line ]
@@ -322,22 +249,192 @@ instance Window DemoWindow where
             (\pos ->
               ( pos
               , pos + Document.charLengthAt document (Coord idx pos)
-              , dw.config.primaryCursorForeground
+              , dw.context.config.primaryCursorForeground
               ))
             cursorRange
-      let quads = fmap (\(begin, end) -> (begin, end, dw.config.primarySelectionBackground)) selRange
-            ++ fmap (\pos -> (pos, pos, dw.config.primaryCursorBackground)) cursorRange
+      let quads = fmap (\(begin, end) -> (begin, end, dw.context.config.primarySelectionBackground)) selRange
+            ++ fmap (\pos -> (pos, pos, dw.context.config.primaryCursorBackground)) cursorRange
       forM_ quads \(begin, end, color) -> do
-        rq <- layoutTextCached dw.config.face ln
+        rq <- layoutTextCached dw.context.config.face ln
         xStart <- if begin == 0 then pure 0 else Raqm.indexToXPosition rq (begin - 1)
         xEnd <- if end == Text.lengthWord8 ln
-          then (+ dw.config.face.sizePx `div` 2) <$> if end == 0 then pure 0 else Raqm.indexToXPosition rq (end - 1)
+          then (+ dw.context.config.face.sizePx `div` 2) <$> if end == 0 then pure 0 else Raqm.indexToXPosition rq (end - 1)
           else Raqm.indexToXPosition rq end
         drawQuadColor dw.quadRenderer textRes color (y - descender - height) (y - descender) (xStart - screenXPos) (xEnd - screenXPos)
-      drawText dw.weaver textRes (-screenXPos) y (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 ln, dw.config.foreground)]) ln
-      -- let rainbow = fmap (\(n, c) -> (n, n + 1, c)) . zip [0 ..] . cycle $ [ Color 0.93 0.94 0.96 1, Color 0.53 0.75 0.82 1, Color 0.37 0.51 0.67 1, Color 0.75 0.38 0.42 1, Color 0.86 0.53 0.44 1, Color 0.92 0.80 0.55 1, Color 0.64 0.75 0.55 1, Color 0.71 0.56 0.68 1 ]
+      drawText dw.weaver textRes (-screenXPos) y (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 ln, dw.context.config.foreground)]) ln
       setSlot viewportSlot $ Viewport 0 0 screenWidth screenHeight
-      drawText dw.weaver res lineNumberMargin y [(0, 100, dw.config.lineNumbersForeground)] (Text.pack (show idx))
+      drawText dw.weaver res lineNumberMargin y [(0, 100, dw.context.config.lineNumbersForeground)] (Text.pack (show idx))
 
 stripNewLine :: Text -> Text
 stripNewLine t = if "\n" `Text.isSuffixOf` t then Text.dropEnd 1 t else t
+
+data Context = Context
+  { selection :: IORef Selection
+  , document :: IORef Document
+  , config :: Config
+  , mode :: IORef Mode
+  , eatFirstChar :: IORef Bool
+  , insertExitCallback :: IORef (IO ())
+  }
+
+type Command = Context -> IO ()
+
+type KeyCandidates = [([(GLFW.ModifierKeys, GLFW.Key)], Command)]
+newtype Keymap = Keymap { candidates :: KeyCandidates }
+
+updateKeyCandidates :: (GLFW.ModifierKeys, GLFW.Key) -> KeyCandidates -> ([Command], KeyCandidates)
+updateKeyCandidates key = onFst (map snd) . partition (null . fst) . concatMap (\case (k : ks, c) -> if k == key then [(ks, c)] else []; ([], _) -> undefined)
+  where onFst f (a, b) = (f a, b)
+
+noneMod, shiftMod, altMod :: GLFW.ModifierKeys
+noneMod = GLFW.ModifierKeys False False False False False False
+shiftMod = noneMod { GLFW.modifierKeysShift = True }
+altMod = noneMod { GLFW.modifierKeysAlt = True }
+
+normalKeymap :: Keymap
+normalKeymap = Keymap
+  [ ( [(noneMod, GLFW.Key'H)]
+    , movement Selection.moveLeft
+    )
+  , ( [(shiftMod, GLFW.Key'H)]
+    , movement $ Selection.extend Selection.moveLeft
+    )
+  , ( [(noneMod, GLFW.Key'L)]
+    , movement Selection.moveRight
+    )
+  , ( [(shiftMod, GLFW.Key'L)]
+    , movement $ Selection.extend Selection.moveRight
+    )
+  , ( [(noneMod, GLFW.Key'E)]
+    , movement Selection.selectToWordEnd
+    )
+  , ( [(shiftMod, GLFW.Key'E)]
+    , movement $ Selection.extend Selection.selectToWordEnd
+    )
+  , ( [(noneMod, GLFW.Key'B)]
+    , movement Selection.selectToWordBegin
+    )
+  , ( [(shiftMod, GLFW.Key'B)]
+    , movement $ Selection.extend Selection.selectToWordBegin
+    )
+  , ( [(noneMod, GLFW.Key'W)]
+    , movement Selection.selectToWordStart
+    )
+  , ( [(shiftMod, GLFW.Key'W)]
+    , movement $ Selection.extend Selection.selectToWordStart
+    )
+  , ( [(noneMod, GLFW.Key'J)]
+    , moveDown id
+    )
+  , ( [(shiftMod, GLFW.Key'J)]
+    , moveDown Selection.extend
+    )
+  , ( [(noneMod, GLFW.Key'K)]
+    , moveUp id
+    )
+  , ( [(shiftMod, GLFW.Key'K)]
+    , moveUp Selection.extend
+    )
+  , ( [(noneMod, GLFW.Key'X)]
+    , movement Selection.expandToLine
+    )
+  , ( [(noneMod, GLFW.Key'G), (noneMod, GLFW.Key'L)]
+    , movement \doc sel ->
+      let
+        end = (\t -> if t == "" then 0 else Document.lastCharOffset t) . Text.dropEnd 1 . Document.getLine sel.mark.line $ doc
+        mark = Coord sel.mark.line end
+      in
+      Selection mark mark
+    )
+  , ( [(noneMod, GLFW.Key'D)]
+    , \ctx -> do
+      sel <- readIORef ctx.selection
+      doc <- readIORef ctx.document
+      let (newDoc, translate) = Document.patch (Selection.selToIv doc sel) "" doc
+      writeIORef ctx.document newDoc
+      writeIORef ctx.selection $ Selection (translate sel.anchor) (translate sel.mark)
+    )
+  , ( [(noneMod, GLFW.Key'I)]
+    , \ctx -> do
+      modifyIORef ctx.selection Selection.turnLeft
+      enterInsert ctx
+    )
+  , ( [(noneMod, GLFW.Key'A)]
+    , \ctx -> do
+      modifyIORef ctx.selection Selection.turnRight
+      sel <- readIORef ctx.selection
+      doc <- readIORef ctx.document
+      when (sel.mark == Document.endOfDocument doc) do
+        let
+          len = Document.charLengthAt doc sel.mark
+          c = sel.mark { column = sel.mark.column + len }
+        modifyIORef ctx.document (fst . Document.patch (Document.Iv c c) "\n")
+      doc' <- readIORef ctx.document
+      writeIORef ctx.selection sel { mark = Document.moveCoord doc' 1 sel.mark }
+      writeIORef ctx.insertExitCallback do
+        doc'' <- readIORef ctx.document
+        modifyIORef ctx.selection \sel' ->
+          if sel'.anchor < sel'.mark
+          then sel' { mark = Document.moveCoord doc'' (-1) sel'.mark }
+          else sel'
+      enterInsert ctx
+    )
+  , ( [(shiftMod, GLFW.Key'5)]
+    , movement \doc _ -> Selection (Coord 0 0) (Document.endOfDocument doc)
+    )
+  , ( [(altMod, GLFW.Key'Semicolon)]
+    , movement . const $ Selection.alternate
+    )
+  , ( [(noneMod, GLFW.Key'Semicolon)]
+    , movement . const $ \sel -> sel { anchor = sel.mark }
+    )
+  ]
+  where
+    movement m ctx = modifyIORef ctx.selection . m =<< readIORef ctx.document
+    moveDown ext ctx = do
+      sel <- readIORef ctx.selection
+      doc <- readIORef ctx.document
+      newSel <- if sel.mark.line /= Document.countLines doc - 1
+        then do
+          target <- maybe (getTarget ctx) pure sel.target
+          let nextLine = stripNewLine . Document.getLine (sel.mark.line + 1) $ doc
+          newCol <- if nextLine == "" then pure 0 else do
+            rqNext <- layoutTextCached ctx.config.face nextLine
+            col <- Raqm.positionToIndex rqNext target 0
+            pure $ min col (Document.lastCharOffset nextLine)
+          let newMark = Coord (sel.mark.line + 1) newCol
+          pure $ SelectionWithTarget newMark newMark (Just target)
+        else pure $ Selection sel.mark sel.mark
+      modifyIORef ctx.selection . ext (\_ _ -> newSel) $ doc
+    moveUp ext ctx = do
+      sel <- readIORef ctx.selection
+      doc <- readIORef ctx.document
+      newSel <- if sel.mark.line /= 0
+        then do
+          target <- maybe (getTarget ctx) pure sel.target
+          let prevLine = stripNewLine . Document.getLine (sel.mark.line - 1) $ doc
+          newCol <- if prevLine == "" then pure 0 else do
+            rqPrev <- layoutTextCached ctx.config.face prevLine
+            col <- Raqm.positionToIndex rqPrev target 0
+            pure $ min col (Document.lastCharOffset prevLine)
+          let newMark = Coord (sel.mark.line - 1) newCol
+          pure $ SelectionWithTarget newMark newMark (Just target)
+        else pure $ Selection sel.mark sel.mark
+      modifyIORef ctx.selection . ext (\_ _ -> newSel) $ doc
+    enterInsert ctx = do
+      writeIORef ctx.eatFirstChar True
+      writeIORef ctx.mode InsertMode
+
+getTarget :: Context -> IO Int
+getTarget ctx = do
+  doc <- readIORef ctx.document
+  mark <- (.mark) <$> readIORef ctx.selection
+  let line = Document.getLine mark.line doc
+  rq <- layoutTextCached ctx.config.face . stripNewLine $ line
+  after <- if mark.column == Text.lengthWord8 line - 1
+    then (+ ctx.config.face.sizePx `div` 2) <$> if mark.column == 0 then pure 0 else Raqm.indexToXPosition rq (mark.column - 1)
+    else Raqm.indexToXPosition rq mark.column
+  before <- if mark.column == 0
+    then pure 0
+    else Raqm.indexToXPosition rq (mark.column - 1)
+  pure $ (before + after) `div` 2

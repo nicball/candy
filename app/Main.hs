@@ -8,7 +8,7 @@ import Data.Function (fix)
 import GL (withGLFW, withWindow, getSlot, setSlot, viewportSlot, Viewport(..), Resolution(..))
 import Config (Config(..), FaceID(..), Color(..))
 import Config qualified
-import Window (flush, withDefaultWindowManager, withDemoWindow, WindowManager(registerWindow), scroll, sendKey, sendChar)
+import Window (flush, withDefaultWindowManager, withEditorWindow, WindowManager(registerWindow), scroll, sendKey, sendChar)
 
 config :: Config
 config = Config
@@ -44,7 +44,7 @@ main = do
     glEnable GL_BLEND
     glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
     withDefaultWindowManager \wm -> do
-      withDemoWindow config \dw -> do
+      withEditorWindow config \dw -> do
         _ <- registerWindow dw wm
 
         GLFW.setFramebufferSizeCallback win (Just \_ w h -> onResize win w h)
@@ -57,9 +57,8 @@ main = do
             redraw wm win
         GLFW.setCharCallback win . Just $ \_ char -> sendChar char wm >> redraw wm win
 
-        fix \loop -> do
+        fix $ \loop -> do
           GLFW.waitEvents
-          -- redraw win
           c <- GLFW.windowShouldClose win
           unless c loop
   where

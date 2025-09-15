@@ -29,7 +29,6 @@ module Raqm
 
 import Control.Exception (Exception, throwIO, finally)
 import Data.Text.Foreign qualified as Text
-import Data.Text qualified as Text
 import Data.Text (Text)
 import Data.Word
 import Foreign.C.String qualified as C
