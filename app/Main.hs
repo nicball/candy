@@ -5,10 +5,10 @@ import Graphics.GL
 import Control.Monad (unless, when)
 import Data.Function (fix)
 
-import GL (withGLFW, withWindow, getSlot, setSlot, viewportSlot, Viewport(..), Resolution(..))
+import GL 
 import Config (Config(..), FaceID(..), Color(..))
 import Config qualified
-import Window (flush, withDefaultWindowManager, withEditorWindow, WindowManager(registerWindow), scroll, sendKey, sendChar)
+import Window 
 
 config :: Config
 config = Config
@@ -43,24 +43,26 @@ main = do
   withGLFW . withWindow 800 600 "Candy" $ \win -> do
     glEnable GL_BLEND
     glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
-    withDefaultWindowManager \wm -> do
-      withEditorWindow config \dw -> do
-        _ <- registerWindow dw wm
+    withDefaultWindowManager config \wm -> do
+      withDefaultEditorWindow config \dw -> do
+        withDefaultBar config \bar -> do
+          _ <- registerEditorWindow dw wm
+          setBar bar wm
 
-        GLFW.setFramebufferSizeCallback win (Just \_ w h -> onResize win w h)
-        uncurry (onResize win) =<< GLFW.getFramebufferSize win
-        GLFW.setWindowRefreshCallback win (Just (redraw wm))
-        GLFW.setScrollCallback win (Just \_ x y -> scroll x y wm >> redraw wm win)
-        GLFW.setKeyCallback win . Just $ \_ key _ state mods -> do
-          when (state /= GLFW.KeyState'Released) do
-            sendKey key mods wm
-            redraw wm win
-        GLFW.setCharCallback win . Just $ \_ char -> sendChar char wm >> redraw wm win
+          GLFW.setFramebufferSizeCallback win (Just \_ w h -> onResize win w h)
+          uncurry (onResize win) =<< GLFW.getFramebufferSize win
+          GLFW.setWindowRefreshCallback win (Just (redraw wm))
+          GLFW.setScrollCallback win (Just \_ x y -> scroll x y wm >> redraw wm win)
+          GLFW.setKeyCallback win . Just $ \_ key _ state mods -> do
+            when (state /= GLFW.KeyState'Released) do
+              sendKey key mods wm
+              redraw wm win
+          GLFW.setCharCallback win . Just $ \_ char -> sendChar char wm >> redraw wm win
 
-        fix $ \loop -> do
-          GLFW.waitEvents
-          c <- GLFW.windowShouldClose win
-          unless c loop
+          fix $ \loop -> do
+            GLFW.waitEvents
+            c <- GLFW.windowShouldClose win
+            unless c loop
   where
 
     onResize _ w h = do
@@ -73,6 +75,6 @@ main = do
       glClear GL_COLOR_BUFFER_BIT
 
       Viewport 0 0 w h <- getSlot viewportSlot
-      flush (Resolution w h) wm
+      draw (Resolution w h) wm
       -- drawWindow (Resolution w h) (DemoWindow undefined (undefined :: DefaultWindowManager) config)
       GLFW.swapBuffers win

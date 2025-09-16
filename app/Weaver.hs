@@ -20,6 +20,7 @@ module Weaver
   , getDescender
   , drawText
   , layoutTextCached
+  , getFaceCached
   ) where
 
 import Control.Monad (forM, foldM, when)
@@ -91,16 +92,16 @@ setResolution (Resolution w h) Weaver{program} = do
   vertRes <- C.withCAString "vert_res" (glGetUniformLocation program)
   glUniform1f vertRes (fromIntegral h)
 
-getLineHeight :: Weaver -> IO Int
-getLineHeight Weaver{ftFace} = do
+getLineHeight :: FT_Face -> IO Int
+getLineHeight ftFace = do
   fromIntegral . (`div` 64) . smHeight . srMetrics <$> (C.peek . frSize =<< C.peek ftFace)
 
-getAscender :: Weaver -> IO Int
-getAscender Weaver{ftFace} = do
+getAscender :: FT_Face -> IO Int
+getAscender ftFace = do
   fromIntegral . (`div` 64) . smAscender . srMetrics <$> (C.peek . frSize =<< C.peek ftFace)
 
-getDescender :: Weaver -> IO Int
-getDescender Weaver{ftFace} = do
+getDescender :: FT_Face -> IO Int
+getDescender ftFace = do
   fromIntegral . (`div` 64) . smDescender . srMetrics <$> (C.peek . frSize =<< C.peek ftFace)
 
 type ColorSpec = [(Int, Int, Color)]
