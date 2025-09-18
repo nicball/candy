@@ -14,11 +14,11 @@ config :: Config
 config = Config
   { face = FaceID
     { sizePx = 24
-    , path = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
-    , index = 17
+    -- , path = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
+    -- , index = 17
 
-    -- , path = "/nix/store/569nxifmwb4r26phghxyn4xszdg7xjxm-source-han-sans-2.004/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
-    -- , index = 27
+    , path = "/nix/store/569nxifmwb4r26phghxyn4xszdg7xjxm-source-han-sans-2.004/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
+    , index = 27
 
     -- , path = "/nix/store/vl44mgyhq46plr28vfj06zj9lk89jyaw-liberation-fonts-2.1.5/share/fonts/truetype/LiberationSans-Regular.ttf"
     -- , path = "/nix/store/hibcvpqv3w7s7fpl3wgd8c33hs0znywq-Iosevka-33.2.3/share/fonts/truetype/Iosevka-ExtendedMedium.ttf"
@@ -27,15 +27,17 @@ config = Config
     }
 
   , foreground = Config.nord6
-  , background = Config.nord0 { alpha = 0.8 }
+  , background = Config.nord0 -- { alpha = 0.8 }
   , primarySelectionForeground = Config.nord0
   , primarySelectionBackground = Config.nord10
   , primaryCursorForeground = Config.nord0
   , primaryCursorBackground = Config.nord8
   , cursorVerticalRangeOnScreen = (0.1, 0.9)
   , cursorHorizontalRangeOnScreen = (0.1, 0.9)
-  , lineNumbersForeground = Config.nord10
-  , lineNumbersBackground = Config.nord1 { alpha = 0.8 }
+  , lineNumbersForeground = Config.nord3
+  , lineNumbersBackground = Color 0 0 0 0
+  , lineNumbersCurrentForeground = Config.nord0
+  , lineNumbersCurrentBackground = Config.nord3
   }
 
 main :: IO ()

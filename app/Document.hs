@@ -37,7 +37,7 @@ data Document = Document
   deriving Show
 
 data Coord = Coord { line :: Int, column :: Int }
-  deriving (Show, Eq, Ord)
+  deriving (Eq, Ord)
 
 data Iv = Iv { begin :: Coord, end :: Coord }
   deriving (Show, Eq)
@@ -47,6 +47,9 @@ data Iv = Iv { begin :: Coord, end :: Coord }
 subIv :: Iv -> Iv -> Bool
 subIv (Iv a b) (Iv c d) = c <= a && b <= d
 -}
+
+instance Show Coord where
+  show c = show c.line <> ":" <> show c.column
 
 inIv :: Coord -> Iv -> Bool
 inIv c (Iv b e) = b <= c && c < e

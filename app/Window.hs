@@ -26,15 +26,12 @@ import Data.Text (Text)
 import Graphics.GL
 import Graphics.UI.GLFW qualified as GLFW
 
-import Config (Config(..), Color(..), FaceID(..))
-import Config qualified
-import Document (Document, Coord(..))
-import Document qualified
-import GL (drawQuadColor, drawQuadTexture, renderToTexture, withQuadRenderer, QuadRenderer, Resolution(..), getSlot, setSlot, Viewport(..), viewportSlot)
+import Config 
+import Document 
+import GL 
 import Raqm qualified
-import Selection qualified
-import Selection (Selection(..))
-import Weaver (Weaver, getLineHeight, getDescender, getFaceCached, layoutTextCached, drawText, withWeaver)
+import Selection 
+import Weaver 
 
 import Data.List (partition)
 
@@ -65,7 +62,7 @@ class Draw a => Bar a where
 data DefaultWindowManager = DefaultWindowManager
   { windows :: IORef (IntMap.IntMap WrapEditorWindow)
   , bar :: IORef (Maybe WrapBar)
-  , quadRenderer :: QuadRenderer
+  , poster :: Poster
   , config :: Config
   }
 
@@ -76,7 +73,7 @@ withDefaultWindowManager :: Config -> (DefaultWindowManager -> IO a) -> IO a
 withDefaultWindowManager config action = do
   windows <- newIORef IntMap.empty
   bar <- newIORef Nothing
-  withQuadRenderer \quadRenderer -> do
+  withPoster \poster -> do
     action DefaultWindowManager{..}
 
 instance Scroll DefaultWindowManager where
@@ -93,18 +90,22 @@ instance Draw DefaultWindowManager where
     [(0, onlyWin)] <- IntMap.assocs <$> readIORef dwm.windows
     let margin = 20
     lineHeight <- getLineHeight =<< getFaceCached dwm.config.face
-    let barRes = Resolution (w - margin * 2) (lineHeight + 10)
-    let editorRes = Resolution (w - margin * 2) (h - margin * 2 - barRes.h - margin)
     case onlyWin of
-      WrapEditorWindow win -> renderToTexture editorRes (draw editorRes win) \editorTex -> do
+      WrapEditorWindow win -> withObject \editorTex -> do
         readIORef dwm.bar >>= \case
           Nothing -> do
-            drawQuadTexture dwm.quadRenderer res editorTex margin (h - 1 - margin) margin (w - 1 - margin)
+            let editorRes = Resolution (w - margin * 2) (h - margin * 2)
+            renderToTexture editorRes editorTex (draw editorRes win)
+            drawQuadTexture dwm.poster res editorTex margin (h - 1 - margin) margin (w - 1 - margin)
           Just (WrapBar bar) -> do
+            let barRes = Resolution (w - margin * 2) (lineHeight + 10)
+            let editorRes = Resolution (w - margin * 2) (h - margin * 2 - barRes.h - margin)
             setContext bar =<< getContext win
-            renderToTexture barRes (draw barRes bar) \barTex -> do
-              drawQuadTexture dwm.quadRenderer res barTex margin (margin + barRes.h - 1) margin (w - 1 - margin)
-              drawQuadTexture dwm.quadRenderer res editorTex (margin + barRes.h + margin) (h - 1 - margin) margin (w - 1 - margin)
+            withObject \barTex -> do
+              renderToTexture barRes barTex (draw barRes bar)
+              renderToTexture editorRes editorTex (draw editorRes win)
+              drawQuadTexture dwm.poster res barTex margin (margin + barRes.h - 1) margin (w - 1 - margin)
+              drawQuadTexture dwm.poster res editorTex (margin + barRes.h + margin) (h - 1 - margin) margin (w - 1 - margin)
 
 instance WindowManager DefaultWindowManager where
   registerEditorWindow w dwm = do
@@ -119,7 +120,7 @@ data DefaultEditorWindow = DefaultEditorWindow
   , weaver :: Weaver
   , context :: Context
   , keyMatchState :: IORef KeyCandidates
-  , quadRenderer :: QuadRenderer
+  , poster :: Poster
   }
 
 data Mode = NormalMode | InsertMode
@@ -137,7 +138,7 @@ withDefaultEditorWindow config action = do
   let context = Context{..}
   keyMatchState <- newIORef normalKeymap.candidates
   withWeaver config \weaver -> do
-    withQuadRenderer \quadRenderer -> do
+    withPoster \poster -> do
       action DefaultEditorWindow{..}
 
 instance Scroll DefaultEditorWindow where
@@ -233,17 +234,16 @@ instance Draw DefaultEditorWindow where
     document <- readIORef dew.context.document
     ftFace <- getFaceCached dew.context.config.face
     height <- getLineHeight ftFace
-    descender <- getDescender ftFace
     let margin = 20
     digitWidth <- (`div` 64) . (.xAdvance) . (!! 0) <$> (Raqm.getGlyphs =<< layoutTextCached dew.context.config.face "0")
-    let lineNumberWidth = (* digitWidth) . max 1 . ceiling . logBase 10 . (+ 1) . (fromIntegral :: Int -> Double) . Document.countLines $ document
-    drawQuadColor dew.quadRenderer res dew.context.config.lineNumbersBackground 0 (res.h - 1) 0 (lineNumberWidth - 1)
+    let lineNumberWidth = (+ 10) . (* digitWidth) . max 1 . ceiling . logBase 10 . (+ 1) . (fromIntegral :: Int -> Double) . Document.countLines $ document
+    drawQuadColor dew.poster res dew.context.config.lineNumbersBackground 0 (res.h - 1) 0 (lineNumberWidth - 1)
     let textRes = Resolution (res.w - lineNumberWidth - margin) res.h
     screenYPos <- readIORef dew.screenYPos
     screenXPos <- readIORef dew.screenXPos
     let
       beginLine = screenYPos `div` height
-      linePos idx = height * (idx + 1) + descender - screenYPos
+      linePos idx = height * (idx + 1) - screenYPos - 1
       numLines = res.h `divSat` height
       divSat a b = let (r, m) = divMod a b in if m /= 0 then r + 1 else r
     sel <- readIORef dew.context.selection
@@ -275,10 +275,18 @@ instance Draw DefaultEditorWindow where
         xEnd <- if end == Text.lengthWord8 ln
           then (+ dew.context.config.face.sizePx `div` 2) <$> if end == 0 then pure 0 else Raqm.indexToXPosition rq (end - 1)
           else Raqm.indexToXPosition rq end
-        drawQuadColor dew.quadRenderer textRes color (y - descender - height) (y - descender) (xStart - screenXPos) (xEnd - screenXPos)
-      drawText dew.weaver textRes (-screenXPos) y (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 ln, dew.context.config.foreground)]) ln
+        drawQuadColor dew.poster textRes color (y - height + 1) y (xStart - screenXPos) (xEnd - screenXPos)
+      when (not . Text.null $ ln) do
+        (lnTex, lnRes) <- drawTextCached dew.weaver (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 ln, dew.context.config.foreground)]) ln
+        drawQuadTexture dew.poster textRes lnTex (y - lnRes.h + 1) y (-screenXPos) (-screenXPos + lnRes.w - 1)
       setSlot viewportSlot $ Viewport 0 0 res.w res.h
-      drawText dew.weaver res 0 y [(0, 100, dew.context.config.lineNumbersForeground)] (Text.pack (show idx))
+      let numFg = if idx == sel.mark.line
+            then dew.context.config.lineNumbersCurrentForeground
+            else dew.context.config.lineNumbersForeground
+      when (idx == sel.mark.line) do
+        drawQuadColor dew.poster res dew.context.config.lineNumbersCurrentBackground (y - height + 1) y 0 (lineNumberWidth - 1)
+      (numTex, numRes) <- drawTextCached dew.weaver [(0, 100, numFg)] (Text.pack (show idx))
+      drawQuadTexture dew.poster res numTex (y - numRes.h + 1) y 5 (5 + numRes.w - 1)
 
 instance EditorWindow DefaultEditorWindow where
   getContext w = pure w.context
@@ -461,28 +469,29 @@ data DefaultBar = DefaultBar
   { context :: IORef (Maybe Context)
   , config :: Config
   , weaver :: Weaver
+  , poster :: Poster
   }
 
 withDefaultBar :: Config -> (DefaultBar -> IO a) -> IO a
 withDefaultBar config action = do
   context <- newIORef Nothing
   withWeaver config \weaver -> do
-    action DefaultBar{..}
+    withPoster \poster -> do
+      action DefaultBar{..}
 
 instance Draw DefaultBar where
   draw res bar = do
-    let Color{..} = Config.nord1 { alpha = 0.8 }in
+    let Color{..} = Config.nord1 {- alpha = 0.8 -}in
       glClearColor red green blue alpha
     glClear GL_COLOR_BUFFER_BIT
     readIORef bar.context >>= \case
       Nothing -> pure ()
       Just context -> do
-        ftFace <- getFaceCached bar.config.face
-        descender <- getDescender ftFace
-        height <- getLineHeight ftFace
-        let baseline = 5 + height + descender - 1
         mode <- readIORef context.mode
-        drawText bar.weaver res 40 baseline [(0, 100, Config.nord6)] (Text.pack (show mode))
+        sel <- readIORef context.selection
+        let text = Text.pack $ show mode <> " " <> show sel
+        (ctxTex, ctxRes) <- drawTextCached bar.weaver [(0, 100, Config.nord6)] text
+        drawQuadTexture bar.poster res ctxTex 5 (5 + ctxRes.h - 1) 5 (5 + ctxRes.w - 1)
         pure ()
 
 instance Bar DefaultBar where

@@ -29,12 +29,16 @@ import Document (breakAfterCoord, breakBeforeCoord, charBreaker, countBreaks, mo
 import Document qualified
 
 data Selection = SelectionWithTarget { anchor :: Coord, mark :: Coord, target :: Maybe Int }
-  deriving Show
 
 {-# COMPLETE Selection #-}
 pattern Selection :: Coord -> Coord -> Selection
 pattern Selection anchor mark <- SelectionWithTarget anchor mark _
   where Selection a m = SelectionWithTarget a m Nothing
+
+instance Show Selection where
+  show sel
+    | sel.anchor == sel.mark = show sel.mark
+    | otherwise = show sel.anchor <> "-" <> show sel.mark
 
 alternate :: Selection -> Selection
 alternate (Selection a b) = Selection b a

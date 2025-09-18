@@ -34,14 +34,14 @@ module GL
   , renderToTexture
   , Resolution(..)
   , pixelQuadToNDC
-  , QuadRenderer
-  , withQuadRenderer
+  , Poster
+  , withPoster
   , drawQuadColor
   , drawQuadTexture
   ) where
 
 import Control.Exception (Exception, throwIO, finally, assert)
-import Control.Monad (when, unless, void)
+import Control.Monad (when, unless)
 import Data.ByteString qualified as BS
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.String.Interpolate (__i)
@@ -256,27 +256,30 @@ instance GLSlot Viewport ViewportSlot where
     pure $ Viewport x y w h
   setSlot _ (Viewport x y w h) = glViewport (fromIntegral x) (fromIntegral y) (fromIntegral w) (fromIntegral h)
 
-renderToTexture :: Resolution -> IO a -> (Texture -> IO b) -> IO b
-renderToTexture (Resolution w h) render action =
-  withObject \texture -> do
-    withSlot texture2DSlot texture do
-      glTexImage2D GL_TEXTURE_2D 0 GL_RGBA (fromIntegral w) (fromIntegral h) 0 GL_RGBA GL_UNSIGNED_BYTE C.nullPtr
-      checkGLError "glTexImage2D"
-      glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST
-      glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
-      glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_S GL_CLAMP_TO_BORDER
-      glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_T GL_CLAMP_TO_BORDER
-      C.withArray [0, 0, 0, 0] (glTexParameterfv GL_TEXTURE_2D GL_TEXTURE_BORDER_COLOR)
-    withObject \fbo -> do
-      withSlot framebufferSlot fbo do
-        glFramebufferTexture2D GL_FRAMEBUFFER GL_COLOR_ATTACHMENT0 GL_TEXTURE_2D texture.id 0
-        checkGLError "glFramebufferTexture2D"
-        flip assert (pure ()) . (== GL_FRAMEBUFFER_COMPLETE) =<< glCheckFramebufferStatus GL_FRAMEBUFFER
-        withSlot viewportSlot (Viewport 0 0 w h) (void render)
-    withSlot texture2DSlot texture (glGenerateMipmap GL_TEXTURE_2D)
-    action texture
+renderToTexture :: Resolution -> Texture -> IO a -> IO a
+renderToTexture res texture render = do
+  withSlot texture2DSlot texture do
+    glTexImage2D GL_TEXTURE_2D 0 GL_RGBA (fromIntegral res.w) (fromIntegral res.h) 0 GL_RGBA GL_UNSIGNED_BYTE C.nullPtr
+    checkGLError "glTexImage2D"
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_S GL_CLAMP_TO_BORDER
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_T GL_CLAMP_TO_BORDER
+    C.withArray [1, 0, 0, 1] (glTexParameterfv GL_TEXTURE_2D GL_TEXTURE_BORDER_COLOR)
+  result <- withObject \fbo -> do
+    withSlot framebufferSlot fbo do
+      glFramebufferTexture2D GL_FRAMEBUFFER GL_COLOR_ATTACHMENT0 GL_TEXTURE_2D texture.id 0
+      checkGLError "glFramebufferTexture2D"
+      flip assert (pure ()) . (== GL_FRAMEBUFFER_COMPLETE) =<< glCheckFramebufferStatus GL_FRAMEBUFFER
+      withSlot viewportSlot (Viewport 0 0 res.w res.h) do
+        glClearColor 0 0 0 0
+        glClear GL_COLOR_BUFFER_BIT
+        render
+  withSlot texture2DSlot texture (glGenerateMipmap GL_TEXTURE_2D)
+  pure result
 
 data Resolution = Resolution { w :: Int, h :: Int }
+  deriving Show
 
 pixelQuadToNDC :: Resolution -> ((Int, Int), (Int, Int), (Int, Int), (Int, Int)) -> [GLfloat]
 pixelQuadToNDC res (tl, tr, bl, br) =
@@ -292,14 +295,14 @@ pixelQuadToNDC res (tl, tr, bl, br) =
       ,  1 + (-fromIntegral y - 1 + dy) * 2 / fromIntegral res.h
       ]
 
-data QuadRenderer = QuadRenderer
+data Poster = Poster
   { prog :: GLuint
   , vao :: GL.VertexArray
   , vbo :: GL.Buffer
   }
 
-withQuadRenderer ::(QuadRenderer -> IO a) -> IO a
-withQuadRenderer action =
+withPoster ::(Poster -> IO a) -> IO a
+withPoster action =
   withProgram vs Nothing fs \prog -> do
     withObject \vao -> do
       withObject \vbo -> do
@@ -309,7 +312,7 @@ withQuadRenderer action =
             glEnableVertexAttribArray 0
             glVertexAttribPointer 1 2 GL_FLOAT GL_FALSE 8 (C.plusPtr C.nullPtr 32)
             glEnableVertexAttribArray 1
-        action QuadRenderer {..}
+        action Poster {..}
   where
     vs = Just
       [__i|
@@ -338,11 +341,11 @@ withQuadRenderer action =
         }
       |]
 
-drawQuadColor :: QuadRenderer -> Resolution -> Color -> Int -> Int -> Int -> Int -> IO ()
-drawQuadColor qr res color yStart yEnd xStart xEnd = do
-  bindProgram qr.prog do
-    withSlot vertexArraySlot qr.vao do
-      withSlot arrayBufferSlot qr.vbo do
+drawQuadColor :: Poster -> Resolution -> Color -> Int -> Int -> Int -> Int -> IO ()
+drawQuadColor poster res color yStart yEnd xStart xEnd = do
+  bindProgram poster.prog do
+    withSlot vertexArraySlot poster.vao do
+      withSlot arrayBufferSlot poster.vbo do
         writeArrayBuffer $
           pixelQuadToNDC res
             ( (xStart, yStart)
@@ -352,16 +355,18 @@ drawQuadColor qr res color yStart yEnd xStart xEnd = do
             )
           ++
           [ 0, 1, 1, 1, 0, 0, 1, 0 ]
-        uColor <- C.withCAString "f_color" (glGetUniformLocation qr.prog)
+        uUseTexture <- C.withCAString "use_texture" (glGetUniformLocation poster.prog)
+        glUniform1i uUseTexture 0
+        uColor <- C.withCAString "f_color" (glGetUniformLocation poster.prog)
         let Color{..} = color in
           glUniform4f uColor red green blue alpha
         glDrawArrays GL_TRIANGLE_STRIP 0 4
 
-drawQuadTexture :: QuadRenderer -> Resolution -> Texture -> Int -> Int -> Int -> Int -> IO ()
-drawQuadTexture qr res texture yStart yEnd xStart xEnd = do
-  bindProgram qr.prog do
-    withSlot vertexArraySlot qr.vao do
-      withSlot arrayBufferSlot qr.vbo do
+drawQuadTexture :: Poster -> Resolution -> Texture -> Int -> Int -> Int -> Int -> IO ()
+drawQuadTexture poster res texture yStart yEnd xStart xEnd = do
+  bindProgram poster.prog do
+    withSlot vertexArraySlot poster.vao do
+      withSlot arrayBufferSlot poster.vbo do
         writeArrayBuffer $
           pixelQuadToNDC res
             ( (xStart, yStart)
@@ -371,7 +376,7 @@ drawQuadTexture qr res texture yStart yEnd xStart xEnd = do
             )
           ++
           [ 0, 1, 1, 1, 0, 0, 1, 0 ]
-        uUseTexture <- C.withCAString "use_texture" (glGetUniformLocation qr.prog)
+        uUseTexture <- C.withCAString "use_texture" (glGetUniformLocation poster.prog)
         glUniform1i uUseTexture 1
         withSlot texture2DSlot texture do
           glDrawArrays GL_TRIANGLE_STRIP 0 4
