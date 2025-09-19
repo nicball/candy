@@ -121,6 +121,7 @@ data DefaultEditorWindow = DefaultEditorWindow
   , context :: Context
   , keyMatchState :: IORef KeyCandidates
   , poster :: Poster
+  , lastTextRes :: IORef Resolution
   }
 
 data Mode = NormalMode | InsertMode
@@ -135,6 +136,7 @@ withDefaultEditorWindow config action = do
   mode <- newIORef NormalMode
   eatFirstChar <- newIORef False
   insertExitCallback <- newIORef (pure ())
+  lastTextRes <- newIORef $ Resolution 0 0
   let context = Context{..}
   keyMatchState <- newIORef normalKeymap.candidates
   withWeaver config \weaver -> do
@@ -199,7 +201,7 @@ instance SendKey DefaultEditorWindow where
         markXPos <- getTarget dew.context
         screenYPos <- readIORef dew.screenYPos
         screenXPos <- readIORef dew.screenXPos
-        Viewport _ _ screenWidth screenHeight <- getSlot viewportSlot
+        Resolution screenWidth screenHeight <- readIORef dew.lastTextRes
         let
           (topRange, bottomRange) = dew.context.config.cursorVerticalRangeOnScreen
           maxScreenYPos = markYPos - truncate (fromIntegral screenHeight * topRange)
@@ -239,6 +241,7 @@ instance Draw DefaultEditorWindow where
     let lineNumberWidth = (+ 10) . (* digitWidth) . max 1 . ceiling . logBase 10 . (+ 1) . (fromIntegral :: Int -> Double) . Document.countLines $ document
     drawQuadColor dew.poster res dew.context.config.lineNumbersBackground $ quadFromTopLeftWH 0 0 lineNumberWidth res.h
     let textRes = Resolution (res.w - lineNumberWidth - margin) res.h
+    writeIORef dew.lastTextRes textRes
     screenYPos <- readIORef dew.screenYPos
     screenXPos <- readIORef dew.screenXPos
     let

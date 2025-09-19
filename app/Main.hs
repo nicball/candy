@@ -2,9 +2,10 @@ module Main (main) where
 
 import Graphics.UI.GLFW qualified as GLFW
 import Graphics.GL
+import Control.Concurrent (threadDelay)
 import Control.Monad (unless, when)
 import Data.Function (fix)
-import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.IORef (writeIORef, readIORef, newIORef)
 
 import GL 
 import Config 
@@ -53,18 +54,28 @@ main = do
           _ <- registerEditorWindow dw wm
           setBar bar wm
 
-          GLFW.setWindowRefreshCallback win . Just $ \_ -> redraw wm win
+          shouldRedraw <- newIORef False
+
+          GLFW.setWindowRefreshCallback win . Just $ \_ -> writeIORef shouldRedraw True
           GLFW.setFramebufferSizeCallback win . Just $ \_ w h -> onResize win w h
           uncurry (onResize win) =<< GLFW.getFramebufferSize win
-          GLFW.setScrollCallback win . Just $ \_ x y -> scroll x y wm >> redraw wm win
+          GLFW.setScrollCallback win . Just $ \_ x y -> scroll x y wm >> writeIORef shouldRedraw True
           GLFW.setKeyCallback win . Just $ \_ key _ state mods -> do
             when (state /= GLFW.KeyState'Released) do
               sendKey key mods wm
-              redraw wm win
-          GLFW.setCharCallback win . Just $ \_ char -> sendChar char wm >> redraw wm win
+              writeIORef shouldRedraw True
+          GLFW.setCharCallback win . Just $ \_ char -> sendChar char wm >> writeIORef shouldRedraw True
 
+          timerFreq <- GLFW.getTimerFrequency
           fix $ \loop -> do
+            begin <- GLFW.getTimerValue
             GLFW.waitEvents
+            readIORef shouldRedraw >>= flip when do
+              redraw wm win
+              writeIORef shouldRedraw False
+            end <- GLFW.getTimerValue
+            let sleepAmount = 25000 - (end - begin) * 1000000 `div` timerFreq
+            when (sleepAmount > 0) (threadDelay . fromIntegral $ sleepAmount)
             c <- GLFW.windowShouldClose win
             unless c loop
   where
