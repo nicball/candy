@@ -4,10 +4,10 @@ import Graphics.UI.GLFW qualified as GLFW
 import Graphics.GL
 import Control.Monad (unless, when)
 import Data.Function (fix)
+import Data.IORef (newIORef, readIORef, writeIORef)
 
 import GL 
-import Config (Config(..), FaceID(..), Color(..))
-import Config qualified
+import Config 
 import Window 
 
 config :: Config
@@ -26,18 +26,20 @@ config = Config
     -- , index = 0
     }
 
-  , foreground = Config.nord6
-  , background = Config.nord0 -- { alpha = 0.8 }
-  , primarySelectionForeground = Config.nord0
-  , primarySelectionBackground = Config.nord10
-  , primaryCursorForeground = Config.nord0
-  , primaryCursorBackground = Config.nord8
+  , foreground = nord6
+  , background = nord0 -- { alpha = 0.8 }
+  , primarySelectionForeground = nord0
+  , primarySelectionBackground = nord10
+  , primaryCursorForeground = nord0
+  , primaryCursorBackground = nord8
   , cursorVerticalRangeOnScreen = (0.1, 0.9)
   , cursorHorizontalRangeOnScreen = (0.1, 0.9)
-  , lineNumbersForeground = Config.nord3
+  , lineNumbersForeground = nord3
   , lineNumbersBackground = Color 0 0 0 0
-  , lineNumbersCurrentForeground = Config.nord0
-  , lineNumbersCurrentBackground = Config.nord3
+  , lineNumbersCurrentForeground = nord0
+  , lineNumbersCurrentBackground = nord3
+  , barBackground = nord3
+  , barForeground = nord6
   }
 
 main :: IO ()
@@ -51,10 +53,10 @@ main = do
           _ <- registerEditorWindow dw wm
           setBar bar wm
 
-          GLFW.setFramebufferSizeCallback win (Just \_ w h -> onResize win w h)
+          GLFW.setWindowRefreshCallback win . Just $ \_ -> redraw wm win
+          GLFW.setFramebufferSizeCallback win . Just $ \_ w h -> onResize win w h
           uncurry (onResize win) =<< GLFW.getFramebufferSize win
-          GLFW.setWindowRefreshCallback win (Just (redraw wm))
-          GLFW.setScrollCallback win (Just \_ x y -> scroll x y wm >> redraw wm win)
+          GLFW.setScrollCallback win . Just $ \_ x y -> scroll x y wm >> redraw wm win
           GLFW.setKeyCallback win . Just $ \_ key _ state mods -> do
             when (state /= GLFW.KeyState'Released) do
               sendKey key mods wm

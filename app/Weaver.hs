@@ -118,9 +118,10 @@ drawText weaver texture colorspec text = assert (not . Text.null $ text) do
         withSlot vertexArraySlot weaver.vao do
           withSlot arrayBufferSlot weaver.vbo do
             writeArrayBuffer array
+            b <- glIsEnabled GL_BLEND
             glDisable GL_BLEND
             glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 10))
-            glEnable GL_BLEND
+            when (b /= 0) (glEnable GL_BLEND)
       pure res
   where
     genVertexArray originX originY = do
@@ -139,7 +140,7 @@ drawText weaver texture colorspec text = assert (not . Text.null $ text) do
             cluster = fromIntegral glyph.cluster
             vertices = fmap fromIntegral [x, y, rg.width, rg.height, rg.atlasX, rg.atlasY] ++ findColor cluster colorspec
           in
-            pure (penX + xAdvance, x + rg.width - 1, vertices : result)
+            pure (penX + xAdvance, x + rg.width, vertices : result)
     findColor _ [] = undefined
     findColor idx ((begin, end, color) : cs)
       | begin <= idx && idx < end = colorToRGBA color

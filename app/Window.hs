@@ -86,7 +86,7 @@ instance SendChar DefaultWindowManager where
   sendChar char dwm = readIORef dwm.windows >>= mapM_ (\case WrapEditorWindow w -> sendChar char w) . IntMap.elems
 
 instance Draw DefaultWindowManager where
-  draw res@(Resolution w h) dwm = do
+  draw res dwm = do
     [(0, onlyWin)] <- IntMap.assocs <$> readIORef dwm.windows
     let margin = 20
     lineHeight <- getLineHeight =<< getFaceCached dwm.config.face
@@ -94,18 +94,18 @@ instance Draw DefaultWindowManager where
       WrapEditorWindow win -> withObject \editorTex -> do
         readIORef dwm.bar >>= \case
           Nothing -> do
-            let editorRes = Resolution (w - margin * 2) (h - margin * 2)
+            let editorRes = Resolution (res.w - margin * 2) (res.h - margin * 2)
             renderToTexture editorRes editorTex (draw editorRes win)
-            drawQuadTexture dwm.poster res editorTex margin (h - 1 - margin) margin (w - 1 - margin)
+            drawQuadTexture dwm.poster res editorTex $ quadFromTopLeftWH margin margin editorRes.w editorRes.h
           Just (WrapBar bar) -> do
-            let barRes = Resolution (w - margin * 2) (lineHeight + 10)
-            let editorRes = Resolution (w - margin * 2) (h - margin * 2 - barRes.h - margin)
+            let barRes = Resolution (res.w - margin * 2) (lineHeight + 10)
+            let editorRes = Resolution (res.w - margin * 2) (res.h - margin * 2 - barRes.h - margin)
             setContext bar =<< getContext win
             withObject \barTex -> do
               renderToTexture barRes barTex (draw barRes bar)
               renderToTexture editorRes editorTex (draw editorRes win)
-              drawQuadTexture dwm.poster res barTex margin (margin + barRes.h - 1) margin (w - 1 - margin)
-              drawQuadTexture dwm.poster res editorTex (margin + barRes.h + margin) (h - 1 - margin) margin (w - 1 - margin)
+              drawQuadTexture dwm.poster res barTex $ quadFromTopLeftWH margin margin barRes.w barRes.h
+              drawQuadTexture dwm.poster res editorTex $ quadFromBottomLeftWH margin (res.h - margin - 1) editorRes.w editorRes.h
 
 instance WindowManager DefaultWindowManager where
   registerEditorWindow w dwm = do
@@ -237,7 +237,7 @@ instance Draw DefaultEditorWindow where
     let margin = 20
     digitWidth <- (`div` 64) . (.xAdvance) . (!! 0) <$> (Raqm.getGlyphs =<< layoutTextCached dew.context.config.face "0")
     let lineNumberWidth = (+ 10) . (* digitWidth) . max 1 . ceiling . logBase 10 . (+ 1) . (fromIntegral :: Int -> Double) . Document.countLines $ document
-    drawQuadColor dew.poster res dew.context.config.lineNumbersBackground 0 (res.h - 1) 0 (lineNumberWidth - 1)
+    drawQuadColor dew.poster res dew.context.config.lineNumbersBackground $ quadFromTopLeftWH 0 0 lineNumberWidth res.h
     let textRes = Resolution (res.w - lineNumberWidth - margin) res.h
     screenYPos <- readIORef dew.screenYPos
     screenXPos <- readIORef dew.screenXPos
@@ -271,22 +271,22 @@ instance Draw DefaultEditorWindow where
             ++ fmap (\pos -> (pos, pos, dew.context.config.primaryCursorBackground)) cursorRange
       forM_ quads \(begin, end, color) -> do
         rq <- layoutTextCached dew.context.config.face ln
-        xStart <- if begin == 0 then pure 0 else Raqm.indexToXPosition rq (begin - 1)
+        xBegin <- if begin == 0 then pure 0 else Raqm.indexToXPosition rq (begin - 1)
         xEnd <- if end == Text.lengthWord8 ln
           then (+ dew.context.config.face.sizePx `div` 2) <$> if end == 0 then pure 0 else Raqm.indexToXPosition rq (end - 1)
           else Raqm.indexToXPosition rq end
-        drawQuadColor dew.poster textRes color (y - height + 1) y (xStart - screenXPos) (xEnd - screenXPos)
+        drawQuadColor dew.poster textRes color $ quadFromBottomLeftWH (xBegin - screenXPos) y (xEnd - xBegin + 1) height
       when (not . Text.null $ ln) do
         (lnTex, lnRes) <- drawTextCached dew.weaver (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 ln, dew.context.config.foreground)]) ln
-        drawQuadTexture dew.poster textRes lnTex (y - lnRes.h + 1) y (-screenXPos) (-screenXPos + lnRes.w - 1)
+        drawQuadTexture dew.poster textRes lnTex $ quadFromBottomLeftWH (-screenXPos) y lnRes.w lnRes.h
       setSlot viewportSlot $ Viewport 0 0 res.w res.h
       let numFg = if idx == sel.mark.line
             then dew.context.config.lineNumbersCurrentForeground
             else dew.context.config.lineNumbersForeground
       when (idx == sel.mark.line) do
-        drawQuadColor dew.poster res dew.context.config.lineNumbersCurrentBackground (y - height + 1) y 0 (lineNumberWidth - 1)
+        drawQuadColor dew.poster res dew.context.config.lineNumbersCurrentBackground $ quadFromBottomLeftWH 0 y lineNumberWidth height
       (numTex, numRes) <- drawTextCached dew.weaver [(0, 100, numFg)] (Text.pack (show idx))
-      drawQuadTexture dew.poster res numTex (y - numRes.h + 1) y 5 (5 + numRes.w - 1)
+      drawQuadTexture dew.poster res numTex $ quadFromBottomLeftWH 5 y numRes.w numRes.h
 
 instance EditorWindow DefaultEditorWindow where
   getContext w = pure w.context
@@ -481,18 +481,16 @@ withDefaultBar config action = do
 
 instance Draw DefaultBar where
   draw res bar = do
-    let Color{..} = Config.nord1 {- alpha = 0.8 -}in
+    let Color{..} = bar.config.barBackground in
       glClearColor red green blue alpha
     glClear GL_COLOR_BUFFER_BIT
-    readIORef bar.context >>= \case
-      Nothing -> pure ()
-      Just context -> do
-        mode <- readIORef context.mode
-        sel <- readIORef context.selection
-        let text = Text.pack $ show mode <> " " <> show sel
-        (ctxTex, ctxRes) <- drawTextCached bar.weaver [(0, 100, Config.nord6)] text
-        drawQuadTexture bar.poster res ctxTex 5 (5 + ctxRes.h - 1) 5 (5 + ctxRes.w - 1)
-        pure ()
+    readIORef bar.context >>= maybe (pure ()) \context -> do
+      mode <- readIORef context.mode
+      sel <- readIORef context.selection
+      let text = Text.pack $ show mode <> " " <> show sel
+      (ctxTex, ctxRes) <- drawTextCached bar.weaver [(0, Text.lengthWord8 text, bar.config.barForeground)] text
+      drawQuadTexture bar.poster res ctxTex $ quadFromTopLeftWH 5 5 ctxRes.w ctxRes.h
+      pure ()
 
 instance Bar DefaultBar where
   setContext w ctx = writeIORef w.context (Just ctx)

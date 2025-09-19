@@ -35,6 +35,8 @@ data Config = Config
   , lineNumbersBackground :: Color
   , lineNumbersCurrentForeground :: Color
   , lineNumbersCurrentBackground :: Color
+  , barBackground :: Color
+  , barForeground :: Color
   }
 
 data FaceID = FaceID

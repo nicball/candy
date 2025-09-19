@@ -34,6 +34,10 @@ module GL
   , renderToTexture
   , Resolution(..)
   , pixelQuadToNDC
+  , Quad(..)
+  , quadFromTopLeftWH
+  , quadFromBottomLeftWH
+  , quadFromYXRange
   , Poster
   , withPoster
   , drawQuadColor
@@ -281,8 +285,8 @@ renderToTexture res texture render = do
 data Resolution = Resolution { w :: Int, h :: Int }
   deriving Show
 
-pixelQuadToNDC :: Resolution -> ((Int, Int), (Int, Int), (Int, Int), (Int, Int)) -> [GLfloat]
-pixelQuadToNDC res (tl, tr, bl, br) =
+pixelQuadToNDC :: Resolution -> Quad -> [GLfloat]
+pixelQuadToNDC res (Quad tl tr bl br) =
   concat
     [ scale tl 0 1
     , scale tr 1 1
@@ -341,19 +345,49 @@ withPoster action =
         }
       |]
 
-drawQuadColor :: Poster -> Resolution -> Color -> Int -> Int -> Int -> Int -> IO ()
-drawQuadColor poster res color yStart yEnd xStart xEnd = do
+data Quad = Quad
+  { topLeft :: (Int, Int)
+  , topRight :: (Int, Int)
+  , bottomLeft :: (Int, Int)
+  , bottomRight :: (Int, Int)
+  }
+
+quadFromYXRange :: Int -> Int -> Int -> Int -> Quad
+quadFromYXRange yBegin yEnd xBegin xEnd = Quad
+  (xBegin, yBegin)
+  (xEnd, yBegin)
+  (xBegin, yEnd)
+  (xEnd, yEnd)
+
+quadFromTopLeftWH :: Int -> Int -> Int -> Int -> Quad
+quadFromTopLeftWH x y w h =
+  let
+    x' = x + w - 1
+    y' = y + h - 1
+  in Quad
+    (x, y)
+    (x', y)
+    (x, y')
+    (x', y')
+
+quadFromBottomLeftWH :: Int -> Int -> Int -> Int -> Quad
+quadFromBottomLeftWH x y w h =
+  let
+    x' = x + w - 1
+    y' = y - h + 1
+  in Quad
+    (x, y')
+    (x', y')
+    (x, y)
+    (x', y)
+
+drawQuadColor :: Poster -> Resolution -> Color -> Quad -> IO ()
+drawQuadColor poster res color quad = do
   bindProgram poster.prog do
     withSlot vertexArraySlot poster.vao do
       withSlot arrayBufferSlot poster.vbo do
         writeArrayBuffer $
-          pixelQuadToNDC res
-            ( (xStart, yStart)
-            , (xEnd, yStart)
-            , (xStart, yEnd)
-            , (xEnd, yEnd)
-            )
-          ++
+          pixelQuadToNDC res quad ++
           [ 0, 1, 1, 1, 0, 0, 1, 0 ]
         uUseTexture <- C.withCAString "use_texture" (glGetUniformLocation poster.prog)
         glUniform1i uUseTexture 0
@@ -362,19 +396,13 @@ drawQuadColor poster res color yStart yEnd xStart xEnd = do
           glUniform4f uColor red green blue alpha
         glDrawArrays GL_TRIANGLE_STRIP 0 4
 
-drawQuadTexture :: Poster -> Resolution -> Texture -> Int -> Int -> Int -> Int -> IO ()
-drawQuadTexture poster res texture yStart yEnd xStart xEnd = do
+drawQuadTexture :: Poster -> Resolution -> Texture -> Quad -> IO ()
+drawQuadTexture poster res texture quad = do
   bindProgram poster.prog do
     withSlot vertexArraySlot poster.vao do
       withSlot arrayBufferSlot poster.vbo do
         writeArrayBuffer $
-          pixelQuadToNDC res
-            ( (xStart, yStart)
-            , (xEnd, yStart)
-            , (xStart, yEnd)
-            , (xEnd, yEnd)
-            )
-          ++
+          pixelQuadToNDC res quad ++
           [ 0, 1, 1, 1, 0, 0, 1, 0 ]
         uUseTexture <- C.withCAString "use_texture" (glGetUniformLocation poster.prog)
         glUniform1i uUseTexture 1
