@@ -50,17 +50,17 @@ data Weaver = Weaver
   , vbo :: GL.Buffer
   , vao :: GL.VertexArray
   , atlas :: Atlas RenderedGlyph
-  , config :: Config
+  , face :: FaceID
   , ftFace :: FT_Face
   }
 
-withWeaver :: Config -> (Weaver -> IO a) -> IO a
-withWeaver config action = do
+withWeaver :: FaceID -> (Weaver -> IO a) -> IO a
+withWeaver face action = do
   withProgram (Just vertexShaderSource) (Just geometryShaderSource) (Just fragmentShaderSource) \program -> bindProgram program do
     tex <- C.withCAString "atlas" (glGetUniformLocation program)
     glUniform1i tex 0
-    ftFace <- getFaceCached config.face
-    (cellW, cellH) <- globalBboxSize config.face.sizePx ftFace
+    ftFace <- getFaceCached face
+    (cellW, cellH) <- globalBboxSize face.sizePx ftFace
     withAtlas 500 cellW cellH \atlas -> do
       texWidth <- C.withCAString "tex_width" (glGetUniformLocation program)
       glUniform1f texWidth (fromIntegral atlas.width)
@@ -104,7 +104,7 @@ drawText :: Weaver -> Texture -> ColorSpec -> Text -> IO Resolution
 drawText weaver texture colorspec text = assert (not . Text.null $ text) do
   bindProgram weaver.program do
     withSlot texture2DSlot weaver.atlas.texture do
-      ftFace <- getFaceCached weaver.config.face
+      ftFace <- getFaceCached weaver.face
       lineHeight <- getLineHeight ftFace
       descender <- getDescender ftFace
       (textWidth, array) <- genVertexArray 0 (lineHeight + descender - 1)
@@ -125,7 +125,7 @@ drawText weaver texture colorspec text = assert (not . Text.null $ text) do
       pure res
   where
     genVertexArray originX originY = do
-      glyphs <- Raqm.getGlyphs =<< layoutTextCached weaver.config.face text
+      glyphs <- Raqm.getGlyphs =<< layoutTextCached weaver.face text
       renderedGlyphs <- renderGlyphToAtlas weaver (fmap (.index) glyphs)
       (_, maxX, vertices) <- foldM renderGlyph (0, 0, []) (zip glyphs renderedGlyphs)
       pure (maxX, concat . reverse $ vertices)
@@ -151,7 +151,8 @@ textTexCache :: LRU.AtomicLRU (FaceID, ColorSpec, Text) (Texture, Resolution)
 textTexCache = unsafePerformIO $ LRU.newAtomicLRU (Just 500)
 
 drawTextCached :: Weaver -> ColorSpec -> Text -> IO (Texture, Resolution)
-drawTextCached weaver colorspec text = lookupCached (weaver.config.face, colorspec, text) new (deleteObject . fst . snd) textTexCache
+drawTextCached weaver colorspec text = do
+  lookupCached (weaver.face, colorspec, text) new (deleteObject . fst . snd) textTexCache
   where
     new = do
       tex <- genObject

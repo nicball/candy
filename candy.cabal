@@ -74,7 +74,10 @@ executable candy
     Window,
     Document,
     Selection,
-    Nexus
+    Nexus,
+    WindowManager,
+    EditorWindow,
+    Bar
 
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:
@@ -109,4 +112,5 @@ executable candy
     OverloadedRecordDot,
     NoFieldSelectors,
     DuplicateRecordFields,
-    MultiWayIf
+    MultiWayIf,
+    PatternSynonyms

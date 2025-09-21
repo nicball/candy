@@ -7,7 +7,11 @@ module Config
   , nord4, nord5, nord6, nord7
   , nord8, nord9, nord10, nord11
   , nord12, nord13, nord14, nord15
+  , config
   ) where
+
+import Data.IORef (IORef, newIORef)
+import System.IO.Unsafe (unsafePerformIO)
 
 data Color = Color
   { red :: Float
@@ -66,3 +70,36 @@ nord12 = Color 0.815686 0.529412 0.439216 1
 nord13 = Color 0.921569 0.796078 0.545098 1
 nord14 = Color 0.639216 0.745098 0.549020 1
 nord15 = Color 0.705882 0.556863 0.678431 1
+
+{-# NOINLINE config #-}
+config :: IORef Config
+config = unsafePerformIO . newIORef $ Config
+  { face = FaceID
+    { sizePx = 24
+    -- , path = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
+    -- , index = 17
+
+    , path = "/nix/store/569nxifmwb4r26phghxyn4xszdg7xjxm-source-han-sans-2.004/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
+    , index = 27
+
+    -- , path = "/nix/store/vl44mgyhq46plr28vfj06zj9lk89jyaw-liberation-fonts-2.1.5/share/fonts/truetype/LiberationSans-Regular.ttf"
+    -- , path = "/nix/store/hibcvpqv3w7s7fpl3wgd8c33hs0znywq-Iosevka-33.2.3/share/fonts/truetype/Iosevka-ExtendedMedium.ttf"
+    -- , path = "/nix/store/46g6p6698lc50ypik6mgg0wf3q23gzqz-dejavu-fonts-2.37/share/fonts/truetype/DejaVuSansMono.ttf"
+    -- , index = 0
+    }
+
+  , foreground = nord6
+  , background = nord0 -- { alpha = 0.8 }
+  , primarySelectionForeground = nord0
+  , primarySelectionBackground = nord10
+  , primaryCursorForeground = nord0
+  , primaryCursorBackground = nord8
+  , cursorVerticalRangeOnScreen = (0.1, 0.9)
+  , cursorHorizontalRangeOnScreen = (0.1, 0.9)
+  , lineNumbersForeground = nord3
+  , lineNumbersBackground = Color 0 0 0 0
+  , lineNumbersCurrentForeground = nord0
+  , lineNumbersCurrentBackground = nord3
+  , barBackground = nord3
+  , barForeground = nord6
+  }
