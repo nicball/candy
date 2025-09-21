@@ -10,7 +10,8 @@ module Window
   , DefaultWindowManager
   , withDefaultWindowManager
   , DefaultEditorWindow
-  , withDefaultEditorWindow
+  , withDefaultEditorWindowFromPath
+  , withDefaultEditorWindowFromContext
   , DefaultBar
   , withDefaultBar
   ) where
@@ -31,7 +32,8 @@ import Document
 import GL 
 import Raqm qualified
 import Selection 
-import Weaver 
+import Weaver
+import Nexus
 
 import Data.List (partition)
 
@@ -61,6 +63,7 @@ class Draw a => Bar a where
 
 data DefaultWindowManager = DefaultWindowManager
   { windows :: IORef (IntMap.IntMap WrapEditorWindow)
+  , counter :: IORef Int
   , bar :: IORef (Maybe WrapBar)
   , poster :: Poster
   , config :: Config
@@ -72,44 +75,55 @@ data WrapBar = forall w. Bar w => WrapBar w
 withDefaultWindowManager :: Config -> (DefaultWindowManager -> IO a) -> IO a
 withDefaultWindowManager config action = do
   windows <- newIORef IntMap.empty
+  counter <- newIORef 0
   bar <- newIORef Nothing
   withPoster \poster -> do
     action DefaultWindowManager{..}
 
+getFocusedWindow :: DefaultWindowManager -> IO WrapEditorWindow
+getFocusedWindow dwm = (IntMap.! 0) <$> readIORef dwm.windows
+
 instance Scroll DefaultWindowManager where
-  scroll x y dwm = readIORef dwm.windows >>= mapM_ (\case WrapEditorWindow w -> scroll x y w) . IntMap.elems
+  scroll x y dwm = getFocusedWindow dwm >>= \case WrapEditorWindow w -> scroll x y w
 
 instance SendKey DefaultWindowManager where
-  sendKey key mods dwm = readIORef dwm.windows >>= mapM_ (\case WrapEditorWindow w -> sendKey key mods w) . IntMap.elems
+  sendKey key mods dwm = getFocusedWindow dwm >>= \case WrapEditorWindow w -> sendKey key mods w
 
 instance SendChar DefaultWindowManager where
-  sendChar char dwm = readIORef dwm.windows >>= mapM_ (\case WrapEditorWindow w -> sendChar char w) . IntMap.elems
+  sendChar char dwm = getFocusedWindow dwm >>= \case WrapEditorWindow w -> sendChar char w
 
 instance Draw DefaultWindowManager where
   draw res dwm = do
-    [(0, onlyWin)] <- IntMap.assocs <$> readIORef dwm.windows
+    [(0, left), (1, right)] <- IntMap.assocs <$> readIORef dwm.windows
     let margin = 20
     lineHeight <- getLineHeight =<< getFaceCached dwm.config.face
-    case onlyWin of
-      WrapEditorWindow win -> withObject \editorTex -> do
+    case (left, right) of
+      (WrapEditorWindow leftWin, WrapEditorWindow rightWin) -> do
         readIORef dwm.bar >>= \case
           Nothing -> do
-            let editorRes = Resolution (res.w - margin * 2) (res.h - margin * 2)
-            renderToTexture editorRes editorTex (draw editorRes win)
-            drawQuadTexture dwm.poster res editorTex $ quadFromTopLeftWH margin margin editorRes.w editorRes.h
+            let editorRes = Resolution ((res.w - margin * 3) `div` 2) (res.h - margin * 2)
+            withObject \leftTex -> withObject \rightTex -> do
+              renderToTexture editorRes leftTex (draw editorRes leftWin)
+              drawQuadTexture dwm.poster res leftTex $ quadFromTopLeftWH margin margin editorRes.w editorRes.h
+              renderToTexture editorRes rightTex (draw editorRes rightWin)
+              drawQuadTexture dwm.poster res rightTex $ quadFromTopLeftWH (2 * margin + editorRes.w) margin editorRes.w editorRes.h
           Just (WrapBar bar) -> do
             let barRes = Resolution (res.w - margin * 2) (lineHeight + 10)
-            let editorRes = Resolution (res.w - margin * 2) (res.h - margin * 2 - barRes.h - margin)
-            setContext bar =<< getContext win
+            let editorRes = Resolution ((res.w - margin * 3) `div` 2) (res.h - margin * 2 - barRes.h - margin)
+            setContext bar =<< (\(WrapEditorWindow win) -> getContext win) =<< getFocusedWindow dwm
             withObject \barTex -> do
               renderToTexture barRes barTex (draw barRes bar)
-              renderToTexture editorRes editorTex (draw editorRes win)
               drawQuadTexture dwm.poster res barTex $ quadFromTopLeftWH margin margin barRes.w barRes.h
-              drawQuadTexture dwm.poster res editorTex $ quadFromBottomLeftWH margin (res.h - margin - 1) editorRes.w editorRes.h
+              withObject \leftTex -> withObject \rightTex -> do
+                renderToTexture editorRes leftTex (draw editorRes leftWin)
+                drawQuadTexture dwm.poster res leftTex $ quadFromBottomLeftWH margin (res.h - margin - 1) editorRes.w editorRes.h
+                renderToTexture editorRes rightTex (draw editorRes rightWin)
+                drawQuadTexture dwm.poster res rightTex $ quadFromBottomLeftWH (2 * margin + editorRes.w) (res.h - margin - 1) editorRes.w editorRes.h
 
 instance WindowManager DefaultWindowManager where
   registerEditorWindow w dwm = do
-    wid <- IntMap.size <$> readIORef dwm.windows
+    wid <- readIORef dwm.counter
+    modifyIORef dwm.counter (+ 1)
     modifyIORef dwm.windows (IntMap.insert wid (WrapEditorWindow w))
     pure (WindowID wid)
   setBar w dwm = writeIORef dwm.bar . Just . WrapBar $ w
@@ -117,6 +131,7 @@ instance WindowManager DefaultWindowManager where
 data DefaultEditorWindow = DefaultEditorWindow
   { screenXPos :: IORef Int
   , screenYPos :: IORef Int
+  , config :: Config
   , weaver :: Weaver
   , context :: Context
   , keyMatchState :: IORef KeyCandidates
@@ -127,17 +142,24 @@ data DefaultEditorWindow = DefaultEditorWindow
 data Mode = NormalMode | InsertMode
   deriving (Eq, Show)
 
-withDefaultEditorWindow :: Config -> (DefaultEditorWindow -> IO a) -> IO a
-withDefaultEditorWindow config action = do
+withDefaultEditorWindowFromPath :: Config -> FilePath -> (DefaultEditorWindow -> IO a) -> IO a
+withDefaultEditorWindowFromPath config path action = do
   screenXPos <- newIORef 0
   screenYPos <- newIORef 0
-  document <- newIORef . Document.fromText =<< Text.readFile "./app/Window.hs"
-  selection <- newIORef (Selection (Coord 0 0) (Coord 0 0))
-  mode <- newIORef NormalMode
-  eatFirstChar <- newIORef False
-  insertExitCallback <- newIORef (pure ())
+  document <- Document.fromText <$> Text.readFile path
   lastTextRes <- newIORef $ Resolution 0 0
-  let context = Context{..}
+  context <- newContext config document
+  keyMatchState <- newIORef normalKeymap.candidates
+  withWeaver config \weaver -> do
+    withPoster \poster -> do
+      action DefaultEditorWindow{..}
+
+withDefaultEditorWindowFromContext :: Config -> DefaultEditorWindow-> (DefaultEditorWindow -> IO a) -> IO a
+withDefaultEditorWindowFromContext config other action = do
+  screenXPos <- newIORef 0
+  screenYPos <- newIORef 0
+  lastTextRes <- newIORef $ Resolution 0 0
+  context <- shareContext other.context
   keyMatchState <- newIORef normalKeymap.candidates
   withWeaver config \weaver -> do
     withPoster \poster -> do
@@ -145,7 +167,7 @@ withDefaultEditorWindow config action = do
 
 instance Scroll DefaultEditorWindow where
   scroll _ y dew = do
-    height <- getLineHeight =<< getFaceCached dew.context.config.face
+    height <- getLineHeight =<< getFaceCached dew.config.face
     modifyIORef dew.screenYPos (max 0 . (\p -> p - truncate y * height))
 
 pattern GMKNone :: GLFW.ModifierKeys
@@ -180,7 +202,7 @@ instance SendKey DefaultEditorWindow where
                 pos = Document.moveCoord doc (-1) sel.mark
                 (newDoc, translate) = Document.patch (Document.Iv pos sel.mark) "" doc
               writeIORef dew.context.document newDoc
-              writeIORef dew.context.selection $ Selection (translate sel.anchor) (translate sel.mark)
+              Nexus.notify translate dew.context.onPatch
           (GMKNone, GLFW.Key'Delete) -> do
             sel <- readIORef dew.context.selection
             doc <- readIORef dew.context.document
@@ -189,24 +211,24 @@ instance SendKey DefaultEditorWindow where
                 len = Document.charLengthAt doc sel.mark
                 (newDoc, translate) = Document.patch (Document.Iv sel.mark sel.mark { column = sel.mark.column + len }) "" doc
               writeIORef dew.context.document newDoc
-              writeIORef dew.context.selection $ Selection (translate sel.anchor) (translate sel.mark)
+              Nexus.notify translate dew.context.onPatch
           (GMKNone, GLFW.Key'Enter) -> sendChar '\n' dew
           _ -> pure ()
     ensureCursorRangeOnScreen
     where
       ensureCursorRangeOnScreen = do
         sel <- readIORef dew.context.selection
-        height <- getLineHeight =<< getFaceCached dew.context.config.face
+        height <- getLineHeight =<< getFaceCached dew.config.face
         let markYPos = height * sel.mark.line
         markXPos <- getTarget dew.context
         screenYPos <- readIORef dew.screenYPos
         screenXPos <- readIORef dew.screenXPos
         Resolution screenWidth screenHeight <- readIORef dew.lastTextRes
         let
-          (topRange, bottomRange) = dew.context.config.cursorVerticalRangeOnScreen
+          (topRange, bottomRange) = dew.config.cursorVerticalRangeOnScreen
           maxScreenYPos = markYPos - truncate (fromIntegral screenHeight * topRange)
           minScreenYPos = markYPos - truncate (fromIntegral screenHeight * bottomRange) + height
-          (leftRange, rightRange) = dew.context.config.cursorHorizontalRangeOnScreen
+          (leftRange, rightRange) = dew.config.cursorHorizontalRangeOnScreen
           maxScreenXPos = markXPos - truncate (fromIntegral screenWidth * leftRange)
           minScreenXPos = markXPos - truncate (fromIntegral screenWidth * rightRange)
         writeIORef dew.screenYPos . max 0 . min maxScreenYPos . max minScreenYPos $ screenYPos
@@ -221,7 +243,7 @@ instance SendChar DefaultEditorWindow where
         doc <- readIORef dew.context.document
         let (newDoc, translate) = Document.patch (Document.Iv sel.mark sel.mark) (Text.singleton char) doc
         writeIORef dew.context.document newDoc
-        writeIORef dew.context.selection $ Selection (translate sel.anchor) (translate sel.mark)
+        Nexus.notify translate dew.context.onPatch
     where
       eatFirstChar action =
         readIORef dew.context.eatFirstChar >>= \case
@@ -230,16 +252,16 @@ instance SendChar DefaultEditorWindow where
 
 instance Draw DefaultEditorWindow where
   draw res dew = do
-    let Color{..} = dew.context.config.background in
+    let Color{..} = dew.config.background in
       glClearColor red green blue alpha
     glClear GL_COLOR_BUFFER_BIT
     document <- readIORef dew.context.document
-    ftFace <- getFaceCached dew.context.config.face
+    ftFace <- getFaceCached dew.config.face
     height <- getLineHeight ftFace
     let margin = 20
-    digitWidth <- (`div` 64) . (.xAdvance) . (!! 0) <$> (Raqm.getGlyphs =<< layoutTextCached dew.context.config.face "0")
+    digitWidth <- (`div` 64) . (.xAdvance) . (!! 0) <$> (Raqm.getGlyphs =<< layoutTextCached dew.config.face "0")
     let lineNumberWidth = (+ 10) . (* digitWidth) . max 1 . ceiling . logBase 10 . (+ 1) . (fromIntegral :: Int -> Double) . Document.countLines $ document
-    drawQuadColor dew.poster res dew.context.config.lineNumbersBackground $ quadFromTopLeftWH 0 0 lineNumberWidth res.h
+    drawQuadColor dew.poster res dew.config.lineNumbersBackground $ quadFromTopLeftWH 0 0 lineNumberWidth res.h
     let textRes = Resolution (res.w - lineNumberWidth - margin) res.h
     writeIORef dew.lastTextRes textRes
     screenYPos <- readIORef dew.screenYPos
@@ -259,7 +281,7 @@ instance Draw DefaultEditorWindow where
             (\(begin, end) ->
               ( begin
               , end + Document.charLengthAt document (Coord idx end)
-              , dew.context.config.primarySelectionForeground
+              , dew.config.primarySelectionForeground
               ))
             selRange
       let cursorRange = [ sel.mark.column | idx == sel.mark.line ]
@@ -267,27 +289,27 @@ instance Draw DefaultEditorWindow where
             (\pos ->
               ( pos
               , pos + Document.charLengthAt document (Coord idx pos)
-              , dew.context.config.primaryCursorForeground
+              , dew.config.primaryCursorForeground
               ))
             cursorRange
-      let quads = fmap (\(begin, end) -> (begin, end, dew.context.config.primarySelectionBackground)) selRange
-            ++ fmap (\pos -> (pos, pos, dew.context.config.primaryCursorBackground)) cursorRange
+      let quads = fmap (\(begin, end) -> (begin, end, dew.config.primarySelectionBackground)) selRange
+            ++ fmap (\pos -> (pos, pos, dew.config.primaryCursorBackground)) cursorRange
       forM_ quads \(begin, end, color) -> do
-        rq <- layoutTextCached dew.context.config.face ln
+        rq <- layoutTextCached dew.config.face ln
         xBegin <- if begin == 0 then pure 0 else Raqm.indexToXPosition rq (begin - 1)
         xEnd <- if end == Text.lengthWord8 ln
-          then (+ dew.context.config.face.sizePx `div` 2) <$> if end == 0 then pure 0 else Raqm.indexToXPosition rq (end - 1)
+          then (+ dew.config.face.sizePx `div` 2) <$> if end == 0 then pure 0 else Raqm.indexToXPosition rq (end - 1)
           else Raqm.indexToXPosition rq end
         drawQuadColor dew.poster textRes color $ quadFromBottomLeftWH (xBegin - screenXPos) y (xEnd - xBegin + 1) height
       when (not . Text.null $ ln) do
-        (lnTex, lnRes) <- drawTextCached dew.weaver (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 ln, dew.context.config.foreground)]) ln
+        (lnTex, lnRes) <- drawTextCached dew.weaver (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 ln, dew.config.foreground)]) ln
         drawQuadTexture dew.poster textRes lnTex $ quadFromBottomLeftWH (-screenXPos) y lnRes.w lnRes.h
       setSlot viewportSlot $ Viewport 0 0 res.w res.h
       let numFg = if idx == sel.mark.line
-            then dew.context.config.lineNumbersCurrentForeground
-            else dew.context.config.lineNumbersForeground
+            then dew.config.lineNumbersCurrentForeground
+            else dew.config.lineNumbersForeground
       when (idx == sel.mark.line) do
-        drawQuadColor dew.poster res dew.context.config.lineNumbersCurrentBackground $ quadFromBottomLeftWH 0 y lineNumberWidth height
+        drawQuadColor dew.poster res dew.config.lineNumbersCurrentBackground $ quadFromBottomLeftWH 0 y lineNumberWidth height
       (numTex, numRes) <- drawTextCached dew.weaver [(0, 100, numFg)] (Text.pack (show idx))
       drawQuadTexture dew.poster res numTex $ quadFromBottomLeftWH 5 y numRes.w numRes.h
 
@@ -300,11 +322,39 @@ stripNewLine t = if "\n" `Text.isSuffixOf` t then Text.dropEnd 1 t else t
 data Context = Context
   { selection :: IORef Selection
   , document :: IORef Document
+  , onPatch :: Nexus (Coord -> Coord)
+  , onPatchToken :: ListenerID
   , config :: Config
   , mode :: IORef Mode
   , eatFirstChar :: IORef Bool
   , insertExitCallback :: IORef (IO ())
   }
+
+newContext :: Config -> Document -> IO Context
+newContext config doc = do
+  document <- newIORef doc
+  onPatch <- newNexus
+  selection <- newIORef (Selection (Coord 0 0) (Coord 0 0))
+  onPatchToken <- flip Nexus.addListener onPatch \move -> do
+    modifyIORef selection \sel -> Selection (move sel.anchor) (move sel.mark)
+  mode <- newIORef NormalMode
+  eatFirstChar <- newIORef False
+  insertExitCallback <- newIORef (pure ())
+  pure Context{..}
+
+shareContext :: Context -> IO Context
+shareContext Context{document, config, onPatch} = do
+  selection <- newIORef (Selection (Coord 0 0) (Coord 0 0))
+  onPatchToken <- flip Nexus.addListener onPatch \move -> do
+    modifyIORef selection \sel -> Selection (move sel.anchor) (move sel.mark)
+  mode <- newIORef NormalMode
+  eatFirstChar <- newIORef False
+  insertExitCallback <- newIORef (pure ())
+  pure Context{..}
+
+deleteContext :: Context -> IO ()
+deleteContext context = do
+  Nexus.removeListener context.onPatchToken context.onPatch
 
 type Command = Context -> IO ()
 
@@ -381,7 +431,7 @@ normalKeymap = Keymap
       doc <- readIORef ctx.document
       let (newDoc, translate) = Document.patch (Selection.selToIv doc sel) "" doc
       writeIORef ctx.document newDoc
-      writeIORef ctx.selection $ Selection (translate sel.anchor) (translate sel.mark)
+      Nexus.notify translate ctx.onPatch
     )
   , ( [(noneMod, GLFW.Key'I)]
     , \ctx -> do

@@ -73,7 +73,8 @@ executable candy
     Raqm,
     Window,
     Document,
-    Selection
+    Selection,
+    Nexus
 
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:

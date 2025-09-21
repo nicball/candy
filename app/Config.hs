@@ -7,7 +7,6 @@ module Config
   , nord4, nord5, nord6, nord7
   , nord8, nord9, nord10, nord11
   , nord12, nord13, nord14, nord15
-  , Padding(..)
   ) where
 
 data Color = Color
@@ -67,11 +66,3 @@ nord12 = Color 0.815686 0.529412 0.439216 1
 nord13 = Color 0.921569 0.796078 0.545098 1
 nord14 = Color 0.639216 0.745098 0.549020 1
 nord15 = Color 0.705882 0.556863 0.678431 1
-
-data Padding = Padding
-  { top :: Int
-  , bottom :: Int
-  , left :: Int
-  , right :: Int
-  }
-  deriving (Show, Eq, Ord)
