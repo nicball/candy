@@ -4,11 +4,14 @@ module Window
   , SendChar(..)
   , Draw(..)
   , WindowManager(..)
-  , WindowID(..)
   , EditorWindow(..)
   , Status(..)
   , Mode(..)
   , Bar(..)
+  , pattern GMKNone
+  , pattern GMKCtrl
+  , pattern GMKShift
+  , pattern GMKAlt
   ) where
 
 import Graphics.UI.GLFW qualified as GLFW
@@ -27,16 +30,14 @@ class SendChar a where
 class Draw a where
   draw :: Resolution -> a -> IO ()
 
-newtype WindowID = WindowID Int
-
 class (Scroll a, SendKey a, SendChar a, Draw a) => WindowManager a where
-  registerEditorWindow :: EditorWindow w => w -> a -> IO WindowID
+  addEditorWindow :: EditorWindow w => w -> a -> IO ()
   setBar :: Bar w => w -> a -> IO ()
 
 class (Scroll a, SendKey a, SendChar a, Draw a) => EditorWindow a where
-  -- fromPath :: FilePath -> IO a
-  -- fork :: a -> IO a
-  -- close :: a -> IO ()
+  fromPath :: FilePath -> IO a
+  fork :: a -> IO a
+  close :: a -> IO ()
   getStatus :: a -> IO Status
 
 class Draw a => Bar a where
@@ -49,3 +50,15 @@ data Status = Status
 
 data Mode = NormalMode | InsertMode
   deriving (Eq, Show)
+
+pattern GMKNone :: GLFW.ModifierKeys
+pattern GMKNone <- GLFW.ModifierKeys { modifierKeysControl = False, modifierKeysShift = False, modifierKeysAlt = False }
+
+pattern GMKShift :: Bool -> GLFW.ModifierKeys
+pattern GMKShift s <- GLFW.ModifierKeys { modifierKeysControl = False, modifierKeysShift = s, modifierKeysAlt = False }
+
+pattern GMKAlt :: Bool -> GLFW.ModifierKeys
+pattern GMKAlt s <- GLFW.ModifierKeys { modifierKeysControl = False, modifierKeysShift = False, modifierKeysAlt = s }
+
+pattern GMKCtrl :: Bool -> GLFW.ModifierKeys
+pattern GMKCtrl s <- GLFW.ModifierKeys { modifierKeysControl = s, modifierKeysShift = False, modifierKeysAlt = False }

@@ -5,7 +5,7 @@ module Atlas
    , texture
    )
  , newAtlas
- , freeAtlas
+ , deleteAtlas
  , withAtlas
  , addGlyph
  ) where
@@ -51,11 +51,11 @@ newAtlas len w h = do
     , height = h * numRows
     }
 
-freeAtlas :: Atlas a -> IO ()
-freeAtlas Atlas{texture} = deleteObject texture
+deleteAtlas :: Atlas a -> IO ()
+deleteAtlas Atlas{texture} = deleteObject texture
 
 withAtlas :: Int -> Int -> Int -> (Atlas a -> IO b) -> IO b
-withAtlas len w h = bracket (newAtlas len w h) freeAtlas
+withAtlas len w h = bracket (newAtlas len w h) deleteAtlas
 
 addGlyph :: Int -> IO (Int, Int, (C.Ptr () -> IO ()) -> IO (), Int -> Int -> a) -> (a -> (Int, Int)) -> Atlas a -> IO (a, Maybe Int)
 addGlyph glyphId render cellFromUserdata atlas = do

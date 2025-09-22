@@ -19,38 +19,35 @@ main = do
   withGLFW . withWindow 800 600 "Candy" $ \win -> do
     glEnable GL_BLEND
     glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
-    withDefaultWindowManager \wm -> do
-      withDefaultEditorWindowFromPath "./app/Window.hs" \dw1 -> do
-        withDefaultEditorWindowFork dw1 \dw2 -> do
-          withDefaultBar \bar -> do
-            _ <- registerEditorWindow dw1 wm
-            _ <- registerEditorWindow dw2 wm
-            setBar bar wm
+    ew <- fromPath "./app/Window.hs" :: IO DefaultEditorWindow
+    withDefaultWindowManager ew \wm -> do
+      withDefaultBar \bar -> do
+        setBar bar wm
 
-            shouldRedraw <- newIORef False
+        shouldRedraw <- newIORef False
 
-            GLFW.setWindowRefreshCallback win . Just $ \_ -> writeIORef shouldRedraw True
-            GLFW.setFramebufferSizeCallback win . Just $ \_ w h -> onResize win w h
-            uncurry (onResize win) =<< GLFW.getFramebufferSize win
-            GLFW.setScrollCallback win . Just $ \_ x y -> scroll x y wm >> writeIORef shouldRedraw True
-            GLFW.setKeyCallback win . Just $ \_ key _ state mods -> do
-              when (state /= GLFW.KeyState'Released) do
-                sendKey key mods wm
-                writeIORef shouldRedraw True
-            GLFW.setCharCallback win . Just $ \_ char -> sendChar char wm >> writeIORef shouldRedraw True
+        GLFW.setWindowRefreshCallback win . Just $ \_ -> writeIORef shouldRedraw True
+        GLFW.setFramebufferSizeCallback win . Just $ \_ w h -> onResize win w h
+        uncurry (onResize win) =<< GLFW.getFramebufferSize win
+        GLFW.setScrollCallback win . Just $ \_ x y -> scroll x y wm >> writeIORef shouldRedraw True
+        GLFW.setKeyCallback win . Just $ \_ key _ state mods -> do
+          when (state /= GLFW.KeyState'Released) do
+            sendKey key mods wm
+            writeIORef shouldRedraw True
+        GLFW.setCharCallback win . Just $ \_ char -> sendChar char wm >> writeIORef shouldRedraw True
 
-            timerFreq <- GLFW.getTimerFrequency
-            fix $ \loop -> do
-              begin <- GLFW.getTimerValue
-              GLFW.waitEvents
-              readIORef shouldRedraw >>= flip when do
-                redraw wm win
-                writeIORef shouldRedraw False
-              end <- GLFW.getTimerValue
-              let sleepAmount = 25000 - (end - begin) * 1000000 `div` timerFreq
-              when (sleepAmount > 0) (threadDelay . fromIntegral $ sleepAmount)
-              c <- GLFW.windowShouldClose win
-              unless c loop
+        timerFreq <- GLFW.getTimerFrequency
+        fix $ \loop -> do
+          begin <- GLFW.getTimerValue
+          GLFW.waitEvents
+          readIORef shouldRedraw >>= flip when do
+            redraw wm win
+            writeIORef shouldRedraw False
+          end <- GLFW.getTimerValue
+          let sleepAmount = 25000 - (end - begin) * 1000000 `div` timerFreq
+          when (sleepAmount > 0) (threadDelay . fromIntegral $ sleepAmount)
+          c <- GLFW.windowShouldClose win
+          unless c loop
   where
 
     onResize _ w h = do
@@ -58,7 +55,8 @@ main = do
 
     redraw wm win = do
       GLFW.getWindowSize win >>= uncurry (onResize win)
-      readIORef config >>= \Config{background = Color{..}} ->
+      -- readIORef config >>= \Config{background = Color{..}} ->
+      let Color{..} = nord1 in
         glClearColor red green blue alpha
       glClear GL_COLOR_BUFFER_BIT
 

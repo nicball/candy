@@ -2,18 +2,10 @@
            , DerivingStrategies
            , QuasiQuotes
            #-}
-
-{-
--<< -< -<- <-- <--- <<- <- -> ->> --> ---> ->- >- >>-
-=<< =< =<= <== <=== <<= <= => =>> ==> ===> =>= >= >>=
-<-> <--> <---> <----> <=> <==> <===> <====> :: ::: __
-<~~ </ </> /> ~~> == != /= ~= <> === !== !==== =/= =!=
-<: := *= *+ <* <*> *> <| <|> |> <. <.> .> +* =* =: :>
-(* *) /* */ [| |] {| |} ++ +++ \/ /\ |- -| <!-- <!---
--}
-
 module Weaver
   ( Weaver
+  , newWeaver
+  , deleteWeaver
   , withWeaver
   , getLineHeight
   , getAscender
@@ -24,7 +16,7 @@ module Weaver
   , getFaceCached
   ) where
 
-import Control.Exception (assert)
+import Control.Exception (assert, bracket)
 import Control.Monad (forM, foldM, when)
 import Data.ByteString qualified as BS
 import Data.Cache.LRU.IO qualified as LRU
@@ -54,37 +46,48 @@ data Weaver = Weaver
   , ftFace :: FT_Face
   }
 
-withWeaver :: FaceID -> (Weaver -> IO a) -> IO a
-withWeaver face action = do
-  withProgram (Just vertexShaderSource) (Just geometryShaderSource) (Just fragmentShaderSource) \program -> bindProgram program do
+newWeaver :: FaceID -> IO Weaver
+newWeaver face = do
+  program <- newProgram (Just vertexShaderSource) (Just geometryShaderSource) (Just fragmentShaderSource)
+  ftFace <- getFaceCached face
+  (cellW, cellH) <- globalBboxSize face.sizePx ftFace
+  atlas <- newAtlas 500 cellW cellH
+  bindProgram program do
     tex <- C.withCAString "atlas" (glGetUniformLocation program)
     glUniform1i tex 0
-    ftFace <- getFaceCached face
-    (cellW, cellH) <- globalBboxSize face.sizePx ftFace
-    withAtlas 500 cellW cellH \atlas -> do
-      texWidth <- C.withCAString "tex_width" (glGetUniformLocation program)
-      glUniform1f texWidth (fromIntegral atlas.width)
-      texHeight <- C.withCAString "tex_height" (glGetUniformLocation program)
-      glUniform1f texHeight (fromIntegral atlas.height)
-      withObject \vbo -> do
-        withObject \vao -> do
-          withSlot arrayBufferSlot vbo do
-            withSlot vertexArraySlot vao do
-              let
-                floatSize :: Num a => a
-                floatSize = fromIntegral (C.sizeOf (0 :: GLfloat))
-                stride = 10 * floatSize
-              glVertexAttribPointer 0 2 GL_FLOAT GL_FALSE stride C.nullPtr
-              glEnableVertexAttribArray 0
-              glVertexAttribPointer 1 1 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (2 * floatSize))
-              glEnableVertexAttribArray 1
-              glVertexAttribPointer 2 1 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (3 * floatSize))
-              glEnableVertexAttribArray 2
-              glVertexAttribPointer 3 2 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (4 * floatSize))
-              glEnableVertexAttribArray 3
-              glVertexAttribPointer 4 4 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (6 * floatSize))
-              glEnableVertexAttribArray 4
-          action Weaver{..}
+    texWidth <- C.withCAString "tex_width" (glGetUniformLocation program)
+    glUniform1f texWidth (fromIntegral atlas.width)
+    texHeight <- C.withCAString "tex_height" (glGetUniformLocation program)
+    glUniform1f texHeight (fromIntegral atlas.height)
+  vbo <- genObject
+  vao <- genObject
+  withSlot arrayBufferSlot vbo do
+    withSlot vertexArraySlot vao do
+      let
+        floatSize :: Num a => a
+        floatSize = fromIntegral (C.sizeOf (0 :: GLfloat))
+        stride = 10 * floatSize
+      glVertexAttribPointer 0 2 GL_FLOAT GL_FALSE stride C.nullPtr
+      glEnableVertexAttribArray 0
+      glVertexAttribPointer 1 1 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (2 * floatSize))
+      glEnableVertexAttribArray 1
+      glVertexAttribPointer 2 1 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (3 * floatSize))
+      glEnableVertexAttribArray 2
+      glVertexAttribPointer 3 2 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (4 * floatSize))
+      glEnableVertexAttribArray 3
+      glVertexAttribPointer 4 4 GL_FLOAT GL_FALSE stride (C.plusPtr C.nullPtr (6 * floatSize))
+      glEnableVertexAttribArray 4
+  pure Weaver{..}
+
+deleteWeaver :: Weaver -> IO ()
+deleteWeaver weaver = do
+  deleteProgram weaver.program
+  deleteObject weaver.vbo
+  deleteObject weaver.vao
+  deleteAtlas weaver.atlas
+
+withWeaver :: FaceID -> (Weaver -> IO a) -> IO a
+withWeaver face = bracket (newWeaver face) deleteWeaver
 
 getLineHeight :: FT_Face -> IO Int
 getLineHeight ftFace = do

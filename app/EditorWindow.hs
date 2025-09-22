@@ -1,7 +1,5 @@
 module EditorWindow
   ( DefaultEditorWindow
-  , withDefaultEditorWindowFromPath
-  , withDefaultEditorWindowFork
   ) where
 
 import Control.Monad (forM_, join, when)
@@ -18,14 +16,14 @@ import Graphics.UI.GLFW qualified as GLFW
 import Config (Color(..), Config(..), FaceID(..), config)
 import Document (Document, Coord(..))
 import Document qualified
-import GL (drawQuadColor, drawQuadTexture, quadFromBottomLeftWH, quadFromTopLeftWH, viewportSlot, withPoster, GLSlot(..), Poster, Resolution(..), Viewport(..))
+import GL (drawQuadColor, drawQuadTexture, quadFromBottomLeftWH, quadFromTopLeftWH, viewportSlot, newPoster, deletePoster, GLSlot(..), Poster, Resolution(..), Viewport(..))
 import Raqm qualified
 import Selection (Selection(..))
 import Selection qualified
-import Weaver (drawTextCached, getFaceCached, getLineHeight, layoutTextCached, withWeaver, Weaver)
+import Weaver (drawTextCached, getFaceCached, getLineHeight, layoutTextCached, newWeaver, deleteWeaver, Weaver)
 import Nexus (newNexus, ListenerID, Nexus)
 import Nexus qualified
-import Window (Draw(..), EditorWindow(..), Scroll(..), SendChar(..), SendKey(..), Status(..), Mode(..))
+import Window (Draw(..), EditorWindow(..), Scroll(..), SendChar(..), SendKey(..), Status(..), Mode(..), pattern GMKNone)
 
 data DefaultEditorWindow = DefaultEditorWindow
   { screenXPos :: IORef Int
@@ -37,44 +35,38 @@ data DefaultEditorWindow = DefaultEditorWindow
   , lastTextRes :: IORef Resolution
   }
 
-withDefaultEditorWindowFromPath :: FilePath -> (DefaultEditorWindow -> IO a) -> IO a
-withDefaultEditorWindowFromPath path action = do
-  screenXPos <- newIORef 0
-  screenYPos <- newIORef 0
-  document <- Document.fromText <$> Text.readFile path
-  lastTextRes <- newIORef $ Resolution 0 0
-  context <- newContext document
-  keyMatchState <- newIORef normalKeymap.candidates
-  face <- (.face) <$> readIORef config
-  withWeaver face \weaver -> do
-    withPoster \poster -> do
-      action DefaultEditorWindow{..}
-
-withDefaultEditorWindowFork :: DefaultEditorWindow-> (DefaultEditorWindow -> IO a) -> IO a
-withDefaultEditorWindowFork other action = do
-  screenXPos <- newIORef 0
-  screenYPos <- newIORef 0
-  lastTextRes <- newIORef $ Resolution 0 0
-  context <- shareContext other.context
-  keyMatchState <- newIORef normalKeymap.candidates
-  face <- (.face) <$> readIORef config
-  withWeaver face \weaver -> do
-    withPoster \poster -> do
-      action DefaultEditorWindow{..}
+instance EditorWindow DefaultEditorWindow where
+  fromPath path = do
+    screenXPos <- newIORef 0
+    screenYPos <- newIORef 0
+    document <- Document.fromText <$> Text.readFile path
+    lastTextRes <- newIORef $ Resolution 0 0
+    context <- newContext document
+    keyMatchState <- newIORef normalKeymap.candidates
+    face <- (.face) <$> readIORef config
+    weaver <- newWeaver face
+    poster <- newPoster
+    pure DefaultEditorWindow{..}
+  fork other = do
+    screenXPos <- newIORef 0
+    screenYPos <- newIORef 0
+    lastTextRes <- newIORef $ Resolution 0 0
+    context <- shareContext other.context
+    keyMatchState <- newIORef normalKeymap.candidates
+    face <- (.face) <$> readIORef config
+    weaver <- newWeaver face
+    poster <- newPoster
+    pure DefaultEditorWindow{..}
+  close dew = do
+    deleteWeaver dew.weaver
+    deleteContext dew.context
+    deletePoster dew.poster
+  getStatus w = Status <$> readIORef w.context.selection <*> readIORef w.context.mode
 
 instance Scroll DefaultEditorWindow where
   scroll _ y dew = do
     height <- getLineHeight =<< getFaceCached . (.face) =<< readIORef config
     modifyIORef dew.screenYPos (max 0 . (\p -> p - truncate y * height))
-
-pattern GMKNone :: GLFW.ModifierKeys
-pattern GMKNone <- GLFW.ModifierKeys { modifierKeysControl = False, modifierKeysShift = False, modifierKeysAlt = False }
-
-pattern GMKShift :: Bool -> GLFW.ModifierKeys
-pattern GMKShift s <- GLFW.ModifierKeys { modifierKeysControl = False, modifierKeysShift = s, modifierKeysAlt = False }
-
-pattern GMKAlt :: Bool -> GLFW.ModifierKeys
-pattern GMKAlt s <- GLFW.ModifierKeys { modifierKeysControl = False, modifierKeysShift = False, modifierKeysAlt = s }
 
 instance SendKey DefaultEditorWindow where
   sendKey key mods dew = do
@@ -211,9 +203,6 @@ instance Draw DefaultEditorWindow where
         drawQuadColor dew.poster res cfg.lineNumbersCurrentBackground $ quadFromBottomLeftWH 0 y lineNumberWidth height
       (numTex, numRes) <- drawTextCached dew.weaver [(0, 100, numFg)] (Text.pack (show idx))
       drawQuadTexture dew.poster res numTex $ quadFromBottomLeftWH 5 y numRes.w numRes.h
-
-instance EditorWindow DefaultEditorWindow where
-  getStatus w = Status <$> readIORef w.context.selection <*> readIORef w.context.mode
 
 stripNewLine :: Text -> Text
 stripNewLine t = if "\n" `Text.isSuffixOf` t then Text.dropEnd 1 t else t

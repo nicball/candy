@@ -40,6 +40,7 @@ data Config = Config
   , lineNumbersCurrentBackground :: Color
   , barBackground :: Color
   , barForeground :: Color
+  , tilingMargin :: Int
   }
 
 data FaceID = FaceID
@@ -102,4 +103,5 @@ config = unsafePerformIO . newIORef $ Config
   , lineNumbersCurrentBackground = nord3
   , barBackground = nord3
   , barForeground = nord6
+  , tilingMargin = 10
   }

@@ -9,6 +9,8 @@ module GL
   , checkGLError
   , withGLFW
   , withWindow
+  , newProgram
+  , deleteProgram
   , withProgram
   , bindProgram
   , writeArrayBuffer
@@ -39,12 +41,14 @@ module GL
   , quadFromBottomLeftWH
   , quadFromYXRange
   , Poster
+  , newPoster
+  , deletePoster
   , withPoster
   , drawQuadColor
   , drawQuadTexture
   ) where
 
-import Control.Exception (Exception, throwIO, finally, assert)
+import Control.Exception (Exception, throwIO, finally, assert, bracket)
 import Control.Monad (when, unless)
 import Data.ByteString qualified as BS
 import Data.List.NonEmpty qualified as NonEmpty
@@ -127,28 +131,35 @@ withShader ty src action = do
           throwIO . GLShaderCompilationError =<< BS.packCString (C.castPtr errMsg)
       action shader
 
-withProgram :: Maybe BS.ByteString -> Maybe BS.ByteString -> Maybe BS.ByteString -> (GLuint -> IO a) -> IO a
-withProgram vs gs fs action = do
+newProgram :: Maybe BS.ByteString -> Maybe BS.ByteString -> Maybe BS.ByteString -> IO GLuint
+newProgram vs gs fs = do
   prog <- glCreateProgram
-  when (prog == 0) (checkGLError "withProgram")
-  useProgram prog `finally` glDeleteProgram prog
+  when (prog == 0) (checkGLError "newProgram")
+  forCPS [(GL_VERTEX_SHADER, vs), (GL_GEOMETRY_SHADER, gs), (GL_FRAGMENT_SHADER, fs)]
+         withShader'
+         (mapM_ (attachShader prog))
+  glLinkProgram prog
+  status <- withPeek (glGetProgramiv prog GL_LINK_STATUS)
+  when (status == GL_FALSE) do
+    logLen <- withPeek (glGetProgramiv prog GL_INFO_LOG_LENGTH)
+    C.withArray (replicate (fromIntegral logLen) 0) \errMsg -> do
+      glGetProgramInfoLog prog logLen C.nullPtr errMsg
+      glDeleteProgram prog
+      throwIO . GLShaderCompilationError =<< BS.packCString (C.castPtr errMsg)
+  pure prog
   where
-    useProgram prog = do
-      forCPS [(GL_VERTEX_SHADER, vs), (GL_GEOMETRY_SHADER, gs), (GL_FRAGMENT_SHADER, fs)]
-             withShader'
-             (mapM_ (attachShader prog))
-      glLinkProgram prog
-      status <- withPeek (glGetProgramiv prog GL_LINK_STATUS)
-      when (status == GL_FALSE) do
-        logLen <- withPeek (glGetProgramiv prog GL_INFO_LOG_LENGTH)
-        C.withArray (replicate (fromIntegral logLen) 0) \errMsg -> do
-          glGetProgramInfoLog prog logLen C.nullPtr errMsg
-          throwIO . GLShaderCompilationError =<< BS.packCString (C.castPtr errMsg)
-      action prog
     withShader' (_, Nothing) cont = cont Nothing
     withShader' (ty, Just src) cont = withShader ty src (cont . Just)
     attachShader _ Nothing = pure ()
     attachShader prog (Just shader) = glAttachShader prog shader
+
+deleteProgram :: GLuint -> IO ()
+deleteProgram = glDeleteProgram
+
+withProgram :: Maybe BS.ByteString -> Maybe BS.ByteString -> Maybe BS.ByteString -> (GLuint -> IO a) -> IO a
+withProgram vs gs fs action = do
+  prog <- newProgram vs gs fs
+  action prog `finally` deleteProgram prog
 
 bindProgram :: GLuint -> IO a -> IO a
 bindProgram prog action = do
@@ -305,18 +316,18 @@ data Poster = Poster
   , vbo :: GL.Buffer
   }
 
-withPoster ::(Poster -> IO a) -> IO a
-withPoster action =
-  withProgram vs Nothing fs \prog -> do
-    withObject \vao -> do
-      withObject \vbo -> do
-        withSlot arrayBufferSlot vbo do
-          withSlot vertexArraySlot vao do
-            glVertexAttribPointer 0 2 GL_FLOAT GL_FALSE 8 C.nullPtr
-            glEnableVertexAttribArray 0
-            glVertexAttribPointer 1 2 GL_FLOAT GL_FALSE 8 (C.plusPtr C.nullPtr 32)
-            glEnableVertexAttribArray 1
-        action Poster {..}
+newPoster :: IO Poster
+newPoster = do
+  prog <- newProgram vs Nothing fs
+  vbo <- genObject
+  vao <- genObject
+  withSlot arrayBufferSlot vbo do
+    withSlot vertexArraySlot vao do
+      glVertexAttribPointer 0 2 GL_FLOAT GL_FALSE 8 C.nullPtr
+      glEnableVertexAttribArray 0
+      glVertexAttribPointer 1 2 GL_FLOAT GL_FALSE 8 (C.plusPtr C.nullPtr 32)
+      glEnableVertexAttribArray 1
+  pure Poster{..}
   where
     vs = Just
       [__i|
@@ -344,6 +355,15 @@ withPoster action =
             color = f_color;
         }
       |]
+
+deletePoster :: Poster -> IO ()
+deletePoster poster = do
+  deleteProgram poster.prog
+  deleteObject poster.vbo
+  deleteObject poster.vao
+
+withPoster ::(Poster -> IO a) -> IO a
+withPoster = bracket newPoster deletePoster
 
 data Quad = Quad
   { topLeft :: (Int, Int)
