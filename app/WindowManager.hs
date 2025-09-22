@@ -3,19 +3,23 @@ module WindowManager
   , withDefaultWindowManager
   ) where
 
+import Control.Monad (when)
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef, writeIORef)
+import Data.Text qualified as Text
+import Data.Text.Foreign qualified as Text
 import Graphics.UI.GLFW as GLFW
 
 import Config (Config(..), config)
-import GL (Poster, Resolution(..), withObject, renderToTexture, withPoster, quadFromTopLeftWH, drawQuadTexture)
-import Weaver (getLineHeight, getFaceCached)
-import Window (Bar(..), EditorWindow(..), WindowManager(..), Draw(..), SendChar(..), SendKey(..), Scroll(..), pattern GMKCtrl)
+import GL (Poster, Resolution(..), withObject, renderToTexture, withPoster, quadFromTopLeftWH, drawQuadTexture, drawQuadColor)
+import Weaver (Weaver, withWeaver, drawTextCached, getLineHeight, getFaceCached)
+import Window (Bar(..), EditorWindow(..), WindowManager(..), Draw(..), SendChar(..), SendKey(..), Scroll(..), Status(..), pattern GMKCtrl)
 
 data DefaultWindowManager = DefaultWindowManager
   { layout :: IORef Tree
   , focus :: IORef Path
   , bar :: IORef (Maybe WrapBar)
   , poster :: Poster
+  , weaver :: Weaver
   }
 
 data WrapEditorWindow = forall w. EditorWindow w => WrapEditorWindow w
@@ -26,8 +30,10 @@ withDefaultWindowManager win action = do
   layout <- newIORef (Leaf (WrapEditorWindow win))
   focus <- newIORef []
   bar <- newIORef Nothing
+  cfg <- readIORef config
   withPoster \poster -> do
-    action DefaultWindowManager{..}
+    withWeaver cfg.windowTitleFace \weaver -> do
+      action DefaultWindowManager{..}
 
 getFocusedWindow :: DefaultWindowManager -> IO WrapEditorWindow
 getFocusedWindow dwm = do
@@ -60,7 +66,7 @@ instance Draw DefaultWindowManager where
     focus <- readIORef dwm.focus
     lineHeight <- getLineHeight =<< getFaceCached . (.face) =<< readIORef config
     readIORef dwm.bar >>= \case
-      Nothing -> drawLayout dwm.poster res 0 0 res layout (Just focus)
+      Nothing -> drawLayout dwm res 0 0 res layout (Just focus)
       Just (WrapBar bar) -> do
         let barRes = res { h = lineHeight + 10 }
         let editorRes = res { h = res.h - barRes.h }
@@ -68,27 +74,36 @@ instance Draw DefaultWindowManager where
         withObject \barTex -> do
           renderToTexture barRes barTex (draw barRes bar)
           drawQuadTexture dwm.poster res barTex $ quadFromTopLeftWH 0 0 barRes.w barRes.h
-        drawLayout dwm.poster res 0 barRes.h editorRes layout (Just focus)
+        drawLayout dwm res 0 barRes.h editorRes layout (Just focus)
 
-drawLayout :: Poster -> Resolution -> Int -> Int -> Resolution -> Tree -> Maybe Path -> IO ()
-drawLayout poster rootRes x y res (Leaf (WrapEditorWindow win)) focus = do
+drawLayout :: DefaultWindowManager -> Resolution -> Int -> Int -> Resolution -> Tree -> Maybe Path -> IO ()
+drawLayout dwm rootRes x y res (Leaf (WrapEditorWindow win)) focus = do
   withObject \tex -> do
     renderToTexture res tex (draw res win)
-    drawQuadTexture poster rootRes tex $ quadFromTopLeftWH x y res.w res.h
-drawLayout poster rootRes x y res (Branch Vertical ratio north south) focus = do
+    drawQuadTexture dwm.poster rootRes tex $ quadFromTopLeftWH x y res.w res.h
+  title <- (.name) <$> getStatus win
+  when (not . Text.null $ title) do
+    cfg <- readIORef config
+    let
+      bg = maybe cfg.windowTitleBackground (const cfg.windowTitleFocusedBackground) focus
+      fg = maybe cfg.windowTitleForeground (const cfg.windowTitleFocusedForeground) focus
+    (titleTex, titleRes) <- drawTextCached dwm.weaver [(0, Text.lengthWord8 title, fg)] title
+    drawQuadColor dwm.poster rootRes bg $ quadFromTopLeftWH (x + res.w - titleRes.w - 6) y (titleRes.w + 6) (titleRes.h + 6)
+    drawQuadTexture dwm.poster rootRes titleTex $ quadFromTopLeftWH (x + res.w - titleRes.w - 3) (y + 3) titleRes.w titleRes.h
+drawLayout dwm rootRes x y res (Branch Vertical ratio north south) focus = do
   margin <- (.tilingMargin) <$> readIORef config
   let
     northHeight = truncate $ fromIntegral (res.h - margin) * ratio
     southHeight = res.h - margin - northHeight
-  drawLayout poster rootRes x y res { h = northHeight } north (moveAlong North focus)
-  drawLayout poster rootRes x (y + northHeight + margin) res { h = southHeight } south(moveAlong South focus)
-drawLayout poster rootRes x y res (Branch Horizontal ratio west east) focus = do
+  drawLayout dwm rootRes x y res { h = northHeight } north (moveAlong North focus)
+  drawLayout dwm rootRes x (y + northHeight + margin) res { h = southHeight } south(moveAlong South focus)
+drawLayout dwm rootRes x y res (Branch Horizontal ratio west east) focus = do
   margin <- (.tilingMargin) <$> readIORef config
   let
     westWidth = truncate $ fromIntegral (res.w - margin) * ratio
     eastWidth = res.w - margin - westWidth
-  drawLayout poster rootRes x y res { w = westWidth } west (moveAlong West focus)
-  drawLayout poster rootRes (x + westWidth + margin) y res { w = eastWidth } east (moveAlong East focus)
+  drawLayout dwm rootRes x y res { w = westWidth } west (moveAlong West focus)
+  drawLayout dwm rootRes (x + westWidth + margin) y res { w = eastWidth } east (moveAlong East focus)
 
 moveAlong :: Direction -> Maybe Path -> Maybe Path
 moveAlong dir (Just (p : ps)) | p == dir = Just ps

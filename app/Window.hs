@@ -17,6 +17,7 @@ module Window
 import Graphics.UI.GLFW qualified as GLFW
 import GL (Resolution)
 import Selection (Selection)
+import Data.Text (Text)
 
 class Scroll a where
   scroll :: Double -> Double -> a -> IO ()
@@ -46,6 +47,7 @@ class Draw a => Bar a where
 data Status = Status
   { selection :: Selection
   , mode :: Mode
+  , name :: Text
   }
 
 data Mode = NormalMode | InsertMode

@@ -143,7 +143,7 @@ drawText weaver texture colorspec text = assert (not . Text.null $ text) do
             cluster = fromIntegral glyph.cluster
             vertices = fmap fromIntegral [x, y, rg.width, rg.height, rg.atlasX, rg.atlasY] ++ findColor cluster colorspec
           in
-            pure (penX + xAdvance, x + rg.width, vertices : result)
+            pure (penX + xAdvance, x + max rg.width (xAdvance `div` 64), vertices : result)
     findColor _ [] = undefined
     findColor idx ((begin, end, color) : cs)
       | begin <= idx && idx < end = colorToRGBA color

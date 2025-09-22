@@ -33,6 +33,7 @@ data DefaultEditorWindow = DefaultEditorWindow
   , keyMatchState :: IORef KeyCandidates
   , poster :: Poster
   , lastTextRes :: IORef Resolution
+  , name :: Text
   }
 
 instance EditorWindow DefaultEditorWindow where
@@ -46,6 +47,7 @@ instance EditorWindow DefaultEditorWindow where
     face <- (.face) <$> readIORef config
     weaver <- newWeaver face
     poster <- newPoster
+    let name = Text.pack path
     pure DefaultEditorWindow{..}
   fork other = do
     screenXPos <- newIORef 0
@@ -56,12 +58,13 @@ instance EditorWindow DefaultEditorWindow where
     face <- (.face) <$> readIORef config
     weaver <- newWeaver face
     poster <- newPoster
+    let name = other.name
     pure DefaultEditorWindow{..}
   close dew = do
     deleteWeaver dew.weaver
     deleteContext dew.context
     deletePoster dew.poster
-  getStatus w = Status <$> readIORef w.context.selection <*> readIORef w.context.mode
+  getStatus w = Status <$> readIORef w.context.selection <*> readIORef w.context.mode <*> pure w.name
 
 instance Scroll DefaultEditorWindow where
   scroll _ y dew = do
