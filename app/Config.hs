@@ -41,11 +41,8 @@ data Config = Config
   , barBackground :: Color
   , barForeground :: Color
   , tilingMargin :: Int
-  , windowTitleForeground :: Color
-  , windowTitleBackground :: Color
-  , windowTitleFocusedForeground :: Color
-  , windowTitleFocusedBackground :: Color
-  , windowTitleFace :: FaceID
+  , windowBorder :: Color
+  , windowFocusedBorder :: Color
   }
 
 data FaceID = FaceID
@@ -108,14 +105,7 @@ config = unsafePerformIO . newIORef $ Config
   , lineNumbersCurrentBackground = nord3
   , barBackground = nord3
   , barForeground = nord6
-  , tilingMargin = 10
-  , windowTitleForeground = nord6
-  , windowTitleBackground = nord3
-  , windowTitleFocusedForeground = nord0
-  , windowTitleFocusedBackground = nord9
-  , windowTitleFace = FaceID
-    { sizePx = 16
-    , path = "/nix/store/569nxifmwb4r26phghxyn4xszdg7xjxm-source-han-sans-2.004/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
-    , index = 27
-    }
+  , tilingMargin = 0
+  , windowBorder = nord1
+  , windowFocusedBorder = nord10
   }

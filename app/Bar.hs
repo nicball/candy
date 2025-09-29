@@ -9,9 +9,10 @@ import Data.Text qualified as Text
 import Graphics.GL (pattern GL_COLOR_BUFFER_BIT, glClear, glClearColor)
 
 import Config (Color(..), Config(..), config)
-import GL (drawQuadTexture, quadFromTopLeftWH, withPoster, Poster, Resolution(..))
+import GL (drawQuadTexture, quadFromTopLeftWH, posterSingleton, Poster, Resolution(..))
 import Weaver (drawTextCached, withWeaver, Weaver)
 import Window (Bar(..), Draw(..), Status(..))
+import Refcount (deref)
 
 data DefaultBar = DefaultBar
   { status :: IORef (Maybe Status)
@@ -23,9 +24,9 @@ withDefaultBar :: (DefaultBar -> IO a) -> IO a
 withDefaultBar action = do
   status <- newIORef Nothing
   face <- (.face) <$> readIORef config
+  let poster = posterSingleton
   withWeaver face \weaver -> do
-    withPoster \poster -> do
-      action DefaultBar{..}
+    action DefaultBar{..}
 
 instance Draw DefaultBar where
   draw res bar = do
@@ -34,8 +35,8 @@ instance Draw DefaultBar where
       glClearColor red green blue alpha
     glClear GL_COLOR_BUFFER_BIT
     readIORef bar.status >>= maybe (pure ()) \status -> do
-      let text = Text.pack $ show status.mode <> " " <> show status.selection
-      (ctxTex, ctxRes) <- drawTextCached bar.weaver [(0, Text.lengthWord8 text, cfg.barForeground)] text
+      let text = (status.name <>) . Text.pack $ " " <> show status.mode <> " " <> show status.selection
+      (ctxTex, ctxRes) <- deref =<< drawTextCached bar.weaver [(0, Text.lengthWord8 text, cfg.barForeground)] text
       drawQuadTexture bar.poster res ctxTex $ quadFromTopLeftWH 5 5 ctxRes.w ctxRes.h
       pure ()
 

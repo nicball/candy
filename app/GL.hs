@@ -41,11 +41,13 @@ module GL
   , quadFromBottomLeftWH
   , quadFromYXRange
   , Poster
+  , posterSingleton
   , newPoster
   , deletePoster
   , withPoster
   , drawQuadColor
   , drawQuadTexture
+  , drawQuadFrame
   ) where
 
 import Control.Exception (Exception, throwIO, finally, assert, bracket)
@@ -60,6 +62,7 @@ import Foreign.Ptr qualified as C
 import Foreign.Storable qualified as C
 import Graphics.GL
 import Graphics.UI.GLFW qualified as GLFW
+import System.IO.Unsafe (unsafePerformIO)
 
 import Config
 
@@ -316,6 +319,10 @@ data Poster = Poster
   , vbo :: GL.Buffer
   }
 
+{-# NOINLINE posterSingleton #-}
+posterSingleton :: Poster
+posterSingleton = unsafePerformIO newPoster
+
 newPoster :: IO Poster
 newPoster = do
   prog <- newProgram vs Nothing fs
@@ -408,7 +415,7 @@ drawQuadColor poster res color quad = do
       withSlot arrayBufferSlot poster.vbo do
         writeArrayBuffer $
           pixelQuadToNDC res quad ++
-          [ 0, 1, 1, 1, 0, 0, 1, 0 ]
+          [ 0, 0, 0, 0, 0, 0, 0, 0 ]
         uUseTexture <- C.withCAString "use_texture" (glGetUniformLocation poster.prog)
         glUniform1i uUseTexture 0
         uColor <- C.withCAString "f_color" (glGetUniformLocation poster.prog)
@@ -428,3 +435,21 @@ drawQuadTexture poster res texture quad = do
         glUniform1i uUseTexture 1
         withSlot texture2DSlot texture do
           glDrawArrays GL_TRIANGLE_STRIP 0 4
+
+drawQuadFrame :: Poster -> Resolution -> Color -> Quad -> IO ()
+drawQuadFrame poster res color quad = do
+  bindProgram poster.prog do
+    withSlot vertexArraySlot poster.vao do
+      withSlot arrayBufferSlot poster.vbo do
+        let
+          verts = concatMap scale [quad.topLeft, quad.topRight, quad.bottomRight, quad.bottomLeft]
+          scale (x, y) = [-1 + (2 * fromIntegral x + 1) / fromIntegral res.w, 1 - (2 * fromIntegral y + 1) / fromIntegral res.h]
+        writeArrayBuffer $
+          verts ++
+          [ 0, 0, 0, 0, 0, 0, 0, 0 ]
+        uUseTexture <- C.withCAString "use_texture" (glGetUniformLocation poster.prog)
+        glUniform1i uUseTexture 0
+        uColor <- C.withCAString "f_color" (glGetUniformLocation poster.prog)
+        let Color{..} = color in
+          glUniform4f uColor red green blue alpha
+        glDrawArrays GL_LINE_LOOP 0 4

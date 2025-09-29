@@ -14,12 +14,12 @@ module Weaver
   , drawTextCached
   , layoutTextCached
   , getFaceCached
+  , getWeaverCached
   ) where
 
 import Control.Exception (assert, bracket)
 import Control.Monad (forM, foldM, when)
 import Data.ByteString qualified as BS
-import Data.Cache.LRU.IO qualified as LRU
 import Data.String.Interpolate (__i)
 import Data.Text.Foreign qualified as Text
 import Data.Text qualified as Text
@@ -36,6 +36,7 @@ import GL
 import Atlas 
 import Config 
 import Raqm qualified
+import Refcount
 
 data Weaver = Weaver
   { program :: GLuint
@@ -43,14 +44,15 @@ data Weaver = Weaver
   , vao :: GL.VertexArray
   , atlas :: Atlas RenderedGlyph
   , face :: FaceID
-  , ftFace :: FT_Face
+  , ftFace :: Refcount FT_Face
   }
 
 newWeaver :: FaceID -> IO Weaver
 newWeaver face = do
   program <- newProgram (Just vertexShaderSource) (Just geometryShaderSource) (Just fragmentShaderSource)
   ftFace <- getFaceCached face
-  (cellW, cellH) <- globalBboxSize face.sizePx ftFace
+  incRef ftFace
+  (cellW, cellH) <- globalBboxSize face.sizePx =<< deref ftFace
   atlas <- newAtlas 500 cellW cellH
   bindProgram program do
     tex <- C.withCAString "atlas" (glGetUniformLocation program)
@@ -85,6 +87,7 @@ deleteWeaver weaver = do
   deleteObject weaver.vbo
   deleteObject weaver.vao
   deleteAtlas weaver.atlas
+  decRef weaver.ftFace
 
 withWeaver :: FaceID -> (Weaver -> IO a) -> IO a
 withWeaver face = bracket (newWeaver face) deleteWeaver
@@ -107,7 +110,7 @@ drawText :: Weaver -> Texture -> ColorSpec -> Text -> IO Resolution
 drawText weaver texture colorspec text = assert (not . Text.null $ text) do
   bindProgram weaver.program do
     withSlot texture2DSlot weaver.atlas.texture do
-      ftFace <- getFaceCached weaver.face
+      ftFace <- deref =<< getFaceCached weaver.face
       lineHeight <- getLineHeight ftFace
       descender <- getDescender ftFace
       (textWidth, array) <- genVertexArray 0 (lineHeight + descender - 1)
@@ -128,7 +131,7 @@ drawText weaver texture colorspec text = assert (not . Text.null $ text) do
       pure res
   where
     genVertexArray originX originY = do
-      glyphs <- Raqm.getGlyphs =<< layoutTextCached weaver.face text
+      glyphs <- Raqm.getGlyphs =<< deref =<< layoutTextCached weaver.face text
       renderedGlyphs <- renderGlyphToAtlas weaver (fmap (.index) glyphs)
       (_, maxX, vertices) <- foldM renderGlyph (0, 0, []) (zip glyphs renderedGlyphs)
       pure (maxX, concat . reverse $ vertices)
@@ -150,12 +153,12 @@ drawText weaver texture colorspec text = assert (not . Text.null $ text) do
       | otherwise = findColor idx cs
 
 {-# NOINLINE textTexCache #-}
-textTexCache :: LRU.AtomicLRU (FaceID, ColorSpec, Text) (Texture, Resolution)
-textTexCache = unsafePerformIO $ LRU.newAtomicLRU (Just 500)
+textTexCache :: Cache (FaceID, ColorSpec, Text) (Texture, Resolution)
+textTexCache = unsafePerformIO $ newCache 500
 
-drawTextCached :: Weaver -> ColorSpec -> Text -> IO (Texture, Resolution)
+drawTextCached :: Weaver -> ColorSpec -> Text -> IO (Refcount (Texture, Resolution))
 drawTextCached weaver colorspec text = do
-  lookupCached (weaver.face, colorspec, text) new (deleteObject . fst . snd) textTexCache
+  lookupCache (weaver.face, colorspec, text) new (deleteObject . fst) textTexCache
   where
     new = do
       tex <- genObject
@@ -167,40 +170,35 @@ globalFtLib :: FT_Library
 globalFtLib = unsafePerformIO ft_Init_FreeType
 
 {-# NOINLINE faceCache #-}
-faceCache :: LRU.AtomicLRU FaceID FT_Face
-faceCache = unsafePerformIO $ LRU.newAtomicLRU (Just 5)
+faceCache :: Cache FaceID FT_Face
+faceCache = unsafePerformIO $ newCache 5
 
-lookupCached :: Ord key => key -> IO value -> ((key, value) -> IO ()) -> LRU.AtomicLRU key value -> IO value
-lookupCached key new delete lru = do
-  LRU.lookup key lru >>= flip maybe pure do
-    value <- new
-    LRU.maxSize lru >>= maybe (pure ()) \limit -> do
-      s <- LRU.size lru
-      when (s == fromIntegral limit) do
-        LRU.pop lru >>= maybe (pure ()) delete
-    LRU.insert key value lru
-    pure value
-
-getFaceCached :: FaceID -> IO FT_Face
-getFaceCached faceID = lookupCached faceID new (ft_Done_Face . snd) faceCache
+getFaceCached :: FaceID -> IO (Refcount FT_Face)
+getFaceCached faceID = lookupCache faceID new (ft_Done_Face) faceCache
   where
     new = do
       face <- ft_New_Face globalFtLib faceID.path (fromIntegral faceID.index)
       ft_Set_Pixel_Sizes face 0 (fromIntegral faceID.sizePx)
       pure face
 
-{-# NOINLINE raqmCache #-}
-raqmCache :: LRU.AtomicLRU (FaceID, Text) Raqm.Raqm
-raqmCache = unsafePerformIO $ LRU.newAtomicLRU (Just 500)
+weaverCache :: Cache FaceID Weaver
+weaverCache = unsafePerformIO $ newCache 5
 
-layoutTextCached :: FaceID -> Text -> IO Raqm.Raqm
-layoutTextCached faceID text = lookupCached (faceID, text) new (Raqm.destroy . snd) raqmCache
+getWeaverCached :: FaceID -> IO (Refcount Weaver)
+getWeaverCached faceID = lookupCache faceID (newWeaver faceID) deleteWeaver weaverCache
+
+{-# NOINLINE raqmCache #-}
+raqmCache :: Cache (FaceID, Text) Raqm.Raqm
+raqmCache = unsafePerformIO $ newCache 500
+
+layoutTextCached :: FaceID -> Text -> IO (Refcount Raqm.Raqm)
+layoutTextCached faceID text = lookupCache (faceID, text) new Raqm.destroy raqmCache
   where
     new = do
       rq <- Raqm.create
       Raqm.setText rq text
       Raqm.setLanguage rq "en" 0 (Text.lengthWord8 text)
-      face <- getFaceCached faceID
+      face <- deref =<< getFaceCached faceID
       Raqm.setFreetypeFace rq face
       -- Raqm.addFontFeature rq "dlig"
       Raqm.layout rq
@@ -331,8 +329,9 @@ renderGlyphToAtlas weaver glyphIds =
     fst <$> addGlyph glyphId (render glyphId) (\rg -> (rg.atlasX, rg.atlasY)) weaver.atlas
   where
     render glyphId = do
-      ft_Load_Glyph weaver.ftFace (fromIntegral glyphId) 0
-      glyphSlotPtr <- frGlyph <$> C.peek weaver.ftFace
+      ftFace <- deref weaver.ftFace
+      ft_Load_Glyph ftFace (fromIntegral glyphId) 0
+      glyphSlotPtr <- frGlyph <$> C.peek ftFace
       ft_Render_Glyph glyphSlotPtr FT_RENDER_MODE_NORMAL
       glyphSlot <- C.peek glyphSlotPtr
       let
