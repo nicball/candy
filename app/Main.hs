@@ -17,7 +17,7 @@ import Bar
 main :: IO ()
 main = do
   withGLFW . withWindow 800 600 "Candy" $ \win -> do
-    glEnable GL_BLEND
+    setSlot blendSlot True
     glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
     ew <- fromPath "./app/Window.hs" :: IO DefaultEditorWindow
     withDefaultWindowManager ew \wm -> do
@@ -51,15 +51,14 @@ main = do
   where
 
     onResize _ w h = do
-      setSlot viewportSlot (Viewport 0 0 w h)
+      setSlot viewportSlot (ScreenRect 0 0 w h)
 
     redraw wm win = do
       GLFW.getWindowSize win >>= uncurry (onResize win)
       -- readIORef config >>= \Config{background = Color{..}} ->
-      let Color{..} = nord1 in
-        glClearColor red green blue alpha
-      glClear GL_COLOR_BUFFER_BIT
+      withSlot clearColorSlot nord1 do
+        glClear GL_COLOR_BUFFER_BIT
 
-      Viewport 0 0 w h <- getSlot viewportSlot
+      ScreenRect 0 0 w h <- getSlot viewportSlot
       draw (Resolution w h) wm
       GLFW.swapBuffers win

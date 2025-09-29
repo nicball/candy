@@ -10,20 +10,20 @@ import Data.Text.Foreign qualified as Text
 import Data.Text.IO qualified as Text
 import Data.Text qualified as Text
 import Data.Text (Text)
-import Graphics.GL (pattern GL_COLOR_BUFFER_BIT, glClear, glClearColor)
 import Graphics.UI.GLFW qualified as GLFW
 
-import Config (Color(..), Config(..), FaceID(..), config)
+import Config (Config(..), FaceID(..), config)
 import Document (Document, Coord(..))
 import Document qualified
-import GL (drawQuadColor, drawQuadTexture, quadFromBottomLeftWH, quadFromTopLeftWH, viewportSlot, posterSingleton, GLSlot(..), Poster, Resolution(..), Viewport(..))
+import GL (drawQuadColor, drawQuadTexture, quadFromBottomLeftWH, quadFromTopLeftWH, quadToViewport, viewportSlot, posterSingleton, GLSlot(..), Resolution(..), clearViewport)
 import Raqm qualified
 import Selection (Selection(..))
 import Selection qualified
 import Weaver (drawTextCached, getFaceCached, getLineHeight, layoutTextCached, getWeaverCached, Weaver)
 import Nexus (newNexus, ListenerID, Nexus)
 import Nexus qualified
-import Window (Draw(..), EditorWindow(..), Scroll(..), SendChar(..), SendKey(..), Status(..), Mode(..), pattern GMKNone)
+import Window (Draw(..), EditorWindow(..), Scroll(..), SendChar(..), SendKey(..), Status(..), Mode(..), GetBox(..), pattern GMKNone)
+import Box (drawableBox)
 import Refcount (decRef, deref, Refcount)
 
 data DefaultEditorWindow = DefaultEditorWindow
@@ -32,9 +32,9 @@ data DefaultEditorWindow = DefaultEditorWindow
   , weaver :: Refcount Weaver
   , context :: Context
   , keyMatchState :: IORef KeyCandidates
-  , poster :: Poster
   , lastTextRes :: IORef Resolution
   , name :: Text
+  , minSize :: IORef Int
   }
 
 instance EditorWindow DefaultEditorWindow where
@@ -47,8 +47,8 @@ instance EditorWindow DefaultEditorWindow where
     keyMatchState <- newIORef normalKeymap.candidates
     face <- (.face) <$> readIORef config
     weaver <- getWeaverCached face
-    let poster = posterSingleton
     let name = Text.pack path
+    minSize <- newIORef 1
     pure DefaultEditorWindow{..}
   fork other = do
     screenXPos <- newIORef 0
@@ -58,8 +58,8 @@ instance EditorWindow DefaultEditorWindow where
     keyMatchState <- newIORef normalKeymap.candidates
     face <- (.face) <$> readIORef config
     weaver <- getWeaverCached face
-    let poster = posterSingleton
     let name = other.name
+    minSize <- newIORef =<< readIORef other.minSize
     pure DefaultEditorWindow{..}
   close dew = do
     decRef dew.weaver
@@ -146,17 +146,16 @@ instance SendChar DefaultEditorWindow where
 instance Draw DefaultEditorWindow where
   draw res dew = do
     cfg <- readIORef config
-    let Color{..} = cfg.background in
-      glClearColor red green blue alpha
-    glClear GL_COLOR_BUFFER_BIT
+    clearViewport cfg.background
     document <- readIORef dew.context.document
     height <- getLineHeight =<< deref =<< getFaceCached cfg.face
     let margin = 20
     digitWidth <- (`div` 64) . (.xAdvance) . (!! 0) <$> (Raqm.getGlyphs =<< deref =<< layoutTextCached cfg.face "0")
     let lineNumberWidth = (+ 10) . (* digitWidth) . max 1 . ceiling . logBase 10 . (+ 1) . (fromIntegral :: Int -> Double) . Document.countLines $ document
-    drawQuadColor dew.poster res cfg.lineNumbersBackground $ quadFromTopLeftWH 0 0 lineNumberWidth res.h
+    drawQuadColor posterSingleton res cfg.lineNumbersBackground $ quadFromTopLeftWH 0 0 lineNumberWidth res.h
     let textRes = Resolution (res.w - lineNumberWidth - margin) res.h
     writeIORef dew.lastTextRes textRes
+    writeIORef dew.minSize (lineNumberWidth + margin + 1)
     screenYPos <- readIORef dew.screenYPos
     screenXPos <- readIORef dew.screenXPos
     let
@@ -165,8 +164,9 @@ instance Draw DefaultEditorWindow where
       numLines = res.h `divSat` height
       divSat a b = let (r, m) = divMod a b in if m /= 0 then r + 1 else r
     sel <- readIORef dew.context.selection
+    oldViewport <- getSlot viewportSlot
     forM_ [ beginLine, beginLine + 1 .. min (beginLine + numLines) (Document.countLines document - 1) ] \idx -> do
-      setSlot viewportSlot $ Viewport (lineNumberWidth + margin) 0 (res.w - lineNumberWidth - margin) res.h
+      setSlot viewportSlot . flip quadToViewport oldViewport $ quadFromTopLeftWH (lineNumberWidth + margin) 0 (res.w - lineNumberWidth - margin) res.h
       let y = linePos idx
       let ln = stripNewLine . Document.getLine idx $ document
       let selRange = maybeToList . Selection.selAtLine document sel $ idx
@@ -193,22 +193,27 @@ instance Draw DefaultEditorWindow where
         xEnd <- if end == Text.lengthWord8 ln
           then (+ cfg.face.sizePx `div` 2) <$> if end == 0 then pure 0 else Raqm.indexToXPosition rq (end - 1)
           else Raqm.indexToXPosition rq end
-        drawQuadColor dew.poster textRes color $ quadFromBottomLeftWH (xBegin - screenXPos) y (xEnd - xBegin + 1) height
+        drawQuadColor posterSingleton textRes color $ quadFromBottomLeftWH (xBegin - screenXPos) y (xEnd - xBegin + 1) height
       weaver <- deref dew.weaver
       when (not . Text.null $ ln) do
         (lnTex, lnRes) <- deref =<< drawTextCached weaver (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 ln, cfg.foreground)]) ln
-        drawQuadTexture dew.poster textRes lnTex $ quadFromBottomLeftWH (-screenXPos) y lnRes.w lnRes.h
-      setSlot viewportSlot $ Viewport 0 0 res.w res.h
+        drawQuadTexture posterSingleton textRes lnTex $ quadFromBottomLeftWH (-screenXPos) y lnRes.w lnRes.h
+      setSlot viewportSlot oldViewport
       let numFg = if idx == sel.mark.line
             then cfg.lineNumbersCurrentForeground
             else cfg.lineNumbersForeground
       when (idx == sel.mark.line) do
-        drawQuadColor dew.poster res cfg.lineNumbersCurrentBackground $ quadFromBottomLeftWH 0 y lineNumberWidth height
+        drawQuadColor posterSingleton res cfg.lineNumbersCurrentBackground $ quadFromBottomLeftWH 0 y lineNumberWidth height
       (numTex, numRes) <- deref =<< drawTextCached weaver [(0, 100, numFg)] (Text.pack (show idx))
-      drawQuadTexture dew.poster res numTex $ quadFromBottomLeftWH 5 y numRes.w numRes.h
+      drawQuadTexture posterSingleton res numTex $ quadFromBottomLeftWH 5 y numRes.w numRes.h
 
 stripNewLine :: Text -> Text
 stripNewLine t = if "\n" `Text.isSuffixOf` t then Text.dropEnd 1 t else t
+
+instance GetBox DefaultEditorWindow where
+  getBox dew = do
+    s <- readIORef dew.minSize
+    pure . drawableBox (Resolution s s) True True $ dew
 
 data Context = Context
   { selection :: IORef Selection

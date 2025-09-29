@@ -78,7 +78,8 @@ executable candy
     WindowManager,
     EditorWindow,
     Bar,
-    Refcount
+    Refcount,
+    Box
 
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:

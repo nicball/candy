@@ -18,7 +18,7 @@ module Weaver
   ) where
 
 import Control.Exception (assert, bracket)
-import Control.Monad (forM, foldM, when)
+import Control.Monad (forM, foldM)
 import Data.ByteString qualified as BS
 import Data.String.Interpolate (__i)
 import Data.Text.Foreign qualified as Text
@@ -124,10 +124,8 @@ drawText weaver texture colorspec text = assert (not . Text.null $ text) do
         withSlot vertexArraySlot weaver.vao do
           withSlot arrayBufferSlot weaver.vbo do
             writeArrayBuffer array
-            b <- glIsEnabled GL_BLEND
-            glDisable GL_BLEND
-            glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 10))
-            when (b /= 0) (glEnable GL_BLEND)
+            withSlot blendSlot False do
+              glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 10))
       pure res
   where
     genVertexArray originX originY = do

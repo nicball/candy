@@ -7,16 +7,13 @@ import Data.IORef (IORef, modifyIORef, newIORef, readIORef, writeIORef)
 import Graphics.UI.GLFW as GLFW
 
 import Config (Config(..), config)
-import GL (Poster, Resolution(..), withObject, renderToTexture, posterSingleton, quadFromTopLeftWH, drawQuadTexture, drawQuadFrame)
-import Weaver (getLineHeight, getFaceCached)
-import Window (Bar(..), EditorWindow(..), WindowManager(..), Draw(..), SendChar(..), SendKey(..), Scroll(..), pattern GMKCtrl)
-import Refcount (deref)
+import Window (Bar(..), EditorWindow(..), WindowManager(..), Draw(..), SendChar(..), SendKey(..), Scroll(..), GetBox(..), pattern GMKCtrl)
+import Box (AnyBox, drawClipping, hbox, hratioBox, hspacer, vbox, vratioBox, vspacer)
 
 data DefaultWindowManager = DefaultWindowManager
   { layout :: IORef Tree
   , focus :: IORef Path
   , bar :: IORef (Maybe WrapBar)
-  , poster :: Poster
   }
 
 data WrapEditorWindow = forall w. EditorWindow w => WrapEditorWindow w
@@ -27,7 +24,6 @@ withDefaultWindowManager win action = do
   layout <- newIORef (Leaf (WrapEditorWindow win))
   focus <- newIORef []
   bar <- newIORef Nothing
-  let poster = posterSingleton
   action DefaultWindowManager{..}
 
 getFocusedWindow :: DefaultWindowManager -> IO WrapEditorWindow
@@ -59,41 +55,26 @@ instance Draw DefaultWindowManager where
   draw res dwm = do
     layout <- readIORef dwm.layout
     focus <- readIORef dwm.focus
-    lineHeight <- getLineHeight =<< deref =<< getFaceCached . (.face) =<< readIORef config
+    layoutBox <- getLayoutBox layout (Just focus)
     readIORef dwm.bar >>= \case
-      Nothing -> drawLayout dwm res 0 0 res layout (Just focus)
+      Nothing -> drawClipping res layoutBox
       Just (WrapBar bar) -> do
-        let barRes = res { h = lineHeight + 10 }
-        let editorRes = res { h = res.h - barRes.h }
         setStatus bar =<< (\(WrapEditorWindow win) -> getStatus win) =<< getFocusedWindow dwm
-        withObject \barTex -> do
-          renderToTexture barRes barTex (draw barRes bar)
-          drawQuadTexture dwm.poster res barTex $ quadFromTopLeftWH 0 0 barRes.w barRes.h
-        drawLayout dwm res 0 barRes.h editorRes layout (Just focus)
+        barBox <- getBox bar
+        drawClipping res (vbox [barBox, layoutBox])
 
-drawLayout :: DefaultWindowManager -> Resolution -> Int -> Int -> Resolution -> Tree -> Maybe Path -> IO ()
-drawLayout dwm rootRes x y res (Leaf (WrapEditorWindow win)) focus = do
-  withObject \tex -> do
-    let winRes = (Resolution (res.w - 2) (res.h - 2))
-    renderToTexture winRes tex (draw winRes win)
-    drawQuadTexture dwm.poster rootRes tex $ quadFromTopLeftWH (x + 1) (y + 1) winRes.w winRes.h
-    cfg <- readIORef config
-    let border = maybe cfg.windowBorder (const cfg.windowFocusedBorder) focus
-    drawQuadFrame dwm.poster rootRes border $ quadFromTopLeftWH x y res.w res.h
-drawLayout dwm rootRes x y res (Branch Vertical ratio north south) focus = do
+getLayoutBox :: Tree -> Maybe Path -> IO AnyBox
+getLayoutBox (Leaf (WrapEditorWindow win)) _ = getBox win -- TODO: draw border
+getLayoutBox (Branch Vertical ratio north south) focus = do
   margin <- (.tilingMargin) <$> readIORef config
-  let
-    northHeight = truncate $ fromIntegral (res.h - margin) * ratio
-    southHeight = res.h - margin - northHeight
-  drawLayout dwm rootRes x y res { h = northHeight } north (moveAlong North focus)
-  drawLayout dwm rootRes x (y + northHeight + margin) res { h = southHeight } south(moveAlong South focus)
-drawLayout dwm rootRes x y res (Branch Horizontal ratio west east) focus = do
+  northBox <- getLayoutBox north (moveAlong North focus)
+  southBox <- getLayoutBox south (moveAlong South focus)
+  pure $ vratioBox ratio northBox (vbox [vspacer margin False, southBox])
+getLayoutBox (Branch Horizontal ratio west east) focus = do
   margin <- (.tilingMargin) <$> readIORef config
-  let
-    westWidth = truncate $ fromIntegral (res.w - margin) * ratio
-    eastWidth = res.w - margin - westWidth
-  drawLayout dwm rootRes x y res { w = westWidth } west (moveAlong West focus)
-  drawLayout dwm rootRes (x + westWidth + margin) y res { w = eastWidth } east (moveAlong East focus)
+  westBox <- getLayoutBox west (moveAlong West focus)
+  eastBox <- getLayoutBox east (moveAlong East focus)
+  pure $ hratioBox ratio westBox (hbox [hspacer margin False, eastBox])
 
 moveAlong :: Direction -> Maybe Path -> Maybe Path
 moveAlong dir (Just (p : ps)) | p == dir = Just ps

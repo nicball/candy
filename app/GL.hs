@@ -30,9 +30,18 @@ module GL
   , Framebuffer
   , FramebufferSlot
   , framebufferSlot
-  , Viewport(..)
+  , ScreenRect(..)
   , ViewportSlot
   , viewportSlot
+  , ScissorSlot
+  , scissorSlot
+  , ClearColorSlot
+  , clearColorSlot
+  , ScissorTestSlot
+  , scissorTestSlot
+  , clearViewport
+  , BlendSlot
+  , blendSlot
   , renderToTexture
   , Resolution(..)
   , pixelQuadToNDC
@@ -40,6 +49,8 @@ module GL
   , quadFromTopLeftWH
   , quadFromBottomLeftWH
   , quadFromYXRange
+  , quadSize
+  , quadToViewport
   , Poster
   , posterSingleton
   , newPoster
@@ -261,18 +272,70 @@ instance GLSlot Framebuffer FramebufferSlot where
   getSlot _ = Framebuffer <$> withPeek (glGetIntegerv GL_FRAMEBUFFER_BINDING . C.castPtr)
   setSlot _ o = glBindFramebuffer GL_FRAMEBUFFER o.id
 
-data Viewport = Viewport { x :: Int, y :: Int, width :: Int, height :: Int }
+data ScreenRect = ScreenRect { x :: Int, y :: Int, width :: Int, height :: Int }
 
 data ViewportSlot = ViewportSlot
 
 viewportSlot :: ViewportSlot
 viewportSlot = ViewportSlot
 
-instance GLSlot Viewport ViewportSlot where
+instance GLSlot ScreenRect ViewportSlot where
   getSlot _ = do
     [x, y, w, h] <- C.allocaArray 4 (\p -> glGetIntegerv GL_VIEWPORT p >> fmap fromIntegral <$> C.peekArray 4 p)
-    pure $ Viewport x y w h
-  setSlot _ (Viewport x y w h) = glViewport (fromIntegral x) (fromIntegral y) (fromIntegral w) (fromIntegral h)
+    pure $ ScreenRect x y w h
+  setSlot _ (ScreenRect x y w h) = do
+    glViewport (fromIntegral x) (fromIntegral y) (fromIntegral w) (fromIntegral h)
+
+data ScissorSlot = ScissorSlot
+
+scissorSlot :: ScissorSlot
+scissorSlot = ScissorSlot
+
+instance GLSlot ScreenRect ScissorSlot where
+  getSlot _ = do
+    [x, y, w, h] <- C.allocaArray 4 (\p -> glGetIntegerv GL_SCISSOR_BOX p >> fmap fromIntegral <$> C.peekArray 4 p)
+    pure $ ScreenRect x y w h
+  setSlot _ (ScreenRect x y w h) = do
+    glScissor (fromIntegral x) (fromIntegral y) (fromIntegral w) (fromIntegral h)
+
+data ClearColorSlot = ClearColorSlot
+
+clearColorSlot :: ClearColorSlot
+clearColorSlot = ClearColorSlot
+
+instance GLSlot Color ClearColorSlot where
+  getSlot _ = do
+    [red, green, blue, alpha] <- C.allocaArray 4 (\p -> glGetFloatv GL_COLOR_CLEAR_VALUE p >> C.peekArray 4 p)
+    pure Color{..}
+  setSlot _ color =
+    let Color{..} = color
+    in glClearColor red green blue alpha
+
+data ScissorTestSlot = ScissorTestSlot
+
+scissorTestSlot :: ScissorTestSlot
+scissorTestSlot = ScissorTestSlot
+
+instance GLSlot Bool ScissorTestSlot where
+  getSlot _ = (/= 0) <$> C.alloca (\p -> glGetBooleanv GL_SCISSOR_TEST p >> C.peek p)
+  setSlot _ b = if b then glEnable GL_SCISSOR_TEST else glDisable GL_SCISSOR_TEST
+
+clearViewport :: Color -> IO ()
+clearViewport color = do
+  withSlot clearColorSlot color do
+    withSlot scissorTestSlot True do
+      vp <- getSlot viewportSlot
+      withSlot scissorSlot vp do
+        glClear GL_COLOR_BUFFER_BIT
+
+data BlendSlot = BlendSlot
+
+blendSlot :: BlendSlot
+blendSlot = BlendSlot
+
+instance GLSlot Bool BlendSlot where
+  getSlot _ = (/= 0) <$> C.alloca (\p -> glGetBooleanv GL_BLEND p >> C.peek p)
+  setSlot _ b = if b then glEnable GL_BLEND else glDisable GL_BLEND
 
 renderToTexture :: Resolution -> Texture -> IO a -> IO a
 renderToTexture res texture render = do
@@ -289,9 +352,9 @@ renderToTexture res texture render = do
       glFramebufferTexture2D GL_FRAMEBUFFER GL_COLOR_ATTACHMENT0 GL_TEXTURE_2D texture.id 0
       checkGLError "glFramebufferTexture2D"
       flip assert (pure ()) . (== GL_FRAMEBUFFER_COMPLETE) =<< glCheckFramebufferStatus GL_FRAMEBUFFER
-      withSlot viewportSlot (Viewport 0 0 res.w res.h) do
-        glClearColor 0 0 0 0
-        glClear GL_COLOR_BUFFER_BIT
+      withSlot viewportSlot (ScreenRect 0 0 res.w res.h) do
+        withSlot clearColorSlot (Color 0 0 0 0) do
+          glClear GL_COLOR_BUFFER_BIT
         render
   withSlot texture2DSlot texture (glGenerateMipmap GL_TEXTURE_2D)
   pure result
@@ -378,6 +441,23 @@ data Quad = Quad
   , bottomLeft :: (Int, Int)
   , bottomRight :: (Int, Int)
   }
+
+quadSize :: Quad -> Resolution
+quadSize quad =
+  let
+    (x, y) = quad.topLeft
+    (x', y') = quad.bottomRight
+  in
+    Resolution (x' - x + 1) (y' - y + 1)
+
+quadToViewport :: Quad -> ScreenRect -> ScreenRect
+quadToViewport quad (ScreenRect x y _ h) =
+  ScreenRect
+    (x + fst quad.bottomLeft)
+    (y + h - 1 - snd quad.bottomLeft)
+    res.w
+    res.h
+  where res = quadSize quad
 
 quadFromYXRange :: Int -> Int -> Int -> Int -> Quad
 quadFromYXRange yBegin yEnd xBegin xEnd = Quad

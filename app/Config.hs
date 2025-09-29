@@ -105,7 +105,7 @@ config = unsafePerformIO . newIORef $ Config
   , lineNumbersCurrentBackground = nord3
   , barBackground = nord3
   , barForeground = nord6
-  , tilingMargin = 0
+  , tilingMargin = 10
   , windowBorder = nord1
   , windowFocusedBorder = nord10
   }
