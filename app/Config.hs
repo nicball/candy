@@ -1,7 +1,12 @@
+{-# LANGUAGE DeriveGeneric #-}
+
 module Config
-  ( Config(..)
-  , FaceID(..)
-  , Color(..)
+  ( ConfigT(..)
+  , Config
+  , FaceIDT(..)
+  , FaceID
+  , Color
+  , ColorT(..)
   , colorToRGBA
   , nord0, nord1, nord2, nord3
   , nord4, nord5, nord6, nord7
@@ -12,45 +17,53 @@ module Config
 
 import Data.IORef (IORef, newIORef)
 import System.IO.Unsafe (unsafePerformIO)
+import GHC.Generics (Generic)
 
-data Color = Color
-  { red :: Float
-  , green :: Float
-  , blue :: Float
-  , alpha :: Float
+data ColorT f = Color
+  { red :: f
+  , green :: f
+  , blue :: f
+  , alpha :: f
   }
-  deriving (Show, Eq, Ord)
+  deriving (Generic, Show, Eq, Ord)
+
+type Color = ColorT Float
 
 colorToRGBA :: Color -> [Float]
 colorToRGBA Color{..} = [ red, green, blue, alpha ]
 
-data Config = Config
-  { face :: FaceID
-  , background :: Color
-  , foreground :: Color
-  , primarySelectionForeground :: Color
-  , primarySelectionBackground :: Color
-  , primaryCursorForeground :: Color
-  , primaryCursorBackground :: Color
-  , cursorVerticalRangeOnScreen :: (Float, Float)
-  , cursorHorizontalRangeOnScreen :: (Float, Float)
-  , lineNumbersForeground :: Color
-  , lineNumbersBackground :: Color
-  , lineNumbersCurrentForeground :: Color
-  , lineNumbersCurrentBackground :: Color
-  , barBackground :: Color
-  , barForeground :: Color
-  , tilingMargin :: Int
-  , windowBorder :: Color
-  , windowFocusedBorder :: Color
+data ConfigT f i s = Config
+  { face :: FaceIDT i s
+  , background :: ColorT f
+  , foreground :: ColorT f
+  , primarySelectionForeground :: ColorT f
+  , primarySelectionBackground :: ColorT f
+  , primaryCursorForeground :: ColorT f
+  , primaryCursorBackground :: ColorT f
+  , cursorVerticalRangeOnScreen :: (f, f)
+  , cursorHorizontalRangeOnScreen :: (f, f)
+  , lineNumbersForeground :: ColorT f
+  , lineNumbersBackground :: ColorT f
+  , lineNumbersCurrentForeground :: ColorT f
+  , lineNumbersCurrentBackground :: ColorT f
+  , barBackground :: ColorT f
+  , barForeground :: ColorT f
+  , tilingMargin :: i
+  , windowBorder :: ColorT f
+  , windowFocusedBorder :: ColorT f
   }
+  deriving (Generic)
 
-data FaceID = FaceID
-  { path :: FilePath
-  , index :: Int
-  , sizePx :: Int
+type Config = ConfigT Float Int String
+
+data FaceIDT i s = FaceID
+  { path :: s
+  , index :: i
+  , sizePx :: i
   }
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Generic)
+
+type FaceID = FaceIDT Int String
 
 nord0, nord1, nord2, nord3 :: Color
 nord4, nord5, nord6, nord7 :: Color

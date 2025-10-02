@@ -13,9 +13,11 @@ import Window
 import WindowManager
 import EditorWindow
 import Bar
+import Script
 
 main :: IO ()
 main = do
+  test
   withGLFW . withWindow 800 600 "Candy" $ \win -> do
     setSlot blendSlot True
     glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA

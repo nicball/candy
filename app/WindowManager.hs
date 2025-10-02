@@ -6,7 +6,7 @@ module WindowManager
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef, writeIORef)
 import Graphics.UI.GLFW as GLFW
 
-import Config (Config(..), config)
+import Config (ConfigT(..), config)
 import Window (Bar(..), EditorWindow(..), WindowManager(..), Draw(..), SendChar(..), SendKey(..), Scroll(..), GetBox(..), pattern GMKCtrl)
 import Box (AnyBox, drawClipping, hbox, hratioBox, hspacer, vbox, vratioBox, vspacer)
 

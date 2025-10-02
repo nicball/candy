@@ -9,7 +9,7 @@ import Data.Maybe (fromJust)
 import Data.Text.Foreign qualified as Text
 import Data.Text qualified as Text
 
-import Config (Config(..), config)
+import Config (ConfigT(..), config)
 import GL (Resolution(..), Texture, clearViewport)
 import Weaver (drawTextCached, getWeaverCached, Weaver)
 import Window (Bar(..), Draw(..), Status(..), GetBox(..), minimumSize)

@@ -79,7 +79,8 @@ executable candy
     EditorWindow,
     Bar,
     Refcount,
-    Box
+    Box,
+    Script
 
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:
@@ -95,7 +96,8 @@ executable candy
     containers,
     lrucache,
     text-icu,
-    string-interpolate
+    string-interpolate,
+    hslua
 
   pkgconfig-depends:
     raqm

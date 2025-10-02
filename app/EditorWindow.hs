@@ -12,7 +12,7 @@ import Data.Text qualified as Text
 import Data.Text (Text)
 import Graphics.UI.GLFW qualified as GLFW
 
-import Config (Config(..), FaceID(..), config)
+import Config (ConfigT(..), FaceIDT(..), config)
 import Document (Document, Coord(..))
 import Document qualified
 import GL (drawQuadColor, drawQuadTexture, quadFromBottomLeftWH, quadFromTopLeftWH, quadToViewport, viewportSlot, posterSingleton, GLSlot(..), Resolution(..), clearViewport)
