@@ -22,6 +22,7 @@ module Document
   ) where
 
 import Data.Foldable (fold)
+import Data.List (foldl')
 import Data.Maybe (fromJust)
 import Data.Monoid (Sum(..))
 import Data.Sequence qualified as Seq
@@ -54,11 +55,14 @@ instance Show Coord where
 inIv :: Coord -> Iv -> Bool
 inIv c (Iv b e) = b <= c && c < e
 
+mapIv :: (Coord -> Coord) -> Iv -> Iv
+mapIv f iv = Iv (f iv.begin) (f iv.end)
+
 empty :: Document
 empty = Document . Seq.singleton $ "\n"
 
-sanitizeCoord :: Document -> Coord -> Coord
-sanitizeCoord doc c
+clampCoord :: Document -> Coord -> Coord
+clampCoord doc c
   | c.line >= numLines = Coord (c.line - 1) (lastCharOffset (getLastLine doc.lines))
   | c.column < Text.lengthWord8 lineText = c
   | c.line == numLines - 1 =  c { column = lastCharOffset lineText }
@@ -67,44 +71,42 @@ sanitizeCoord doc c
     lineText = Document.getLine c.line doc
     numLines = countLines doc
 
-closeLines :: Seq Text -> Seq Text
-closeLines lns = case Seq.viewr lns of
-  as Seq.:> a
-    | a == "" -> closeLines as
-    | otherwise -> lns
-  Seq.EmptyR -> Seq.singleton "\n"
-
-patch :: Iv -> Text -> Document -> (Document, Coord -> Coord)
-patch iv@(Iv (Coord bline bcol) (Coord eline ecol)) text doc
-  | bline > eline = undefined
-  | otherwise = (newDoc, patchCoord)
+patch :: [(Iv, Text)] -> Document -> (Document, Coord -> Coord)
+patch mods doc = (newDoc, clampCoord newDoc . genTranslate id)
   where
-    newDoc = Document . closeLines . combineLines before . combineLines textLines $ after
-    before = Seq.take bline doc.lines <> Seq.singleton prefix
-    after = (if Text.null suffix then Seq.empty else Seq.singleton suffix) <> Seq.drop (eline + 1) doc.lines
-    prefix = Text.takeWord8 (fromIntegral bcol) . fromJust . Seq.lookup bline $ doc.lines
-    suffix = Text.dropWord8 (fromIntegral ecol) . fromJust . Seq.lookup eline $ doc.lines
-    textLines = toOpenLines text
-    numLines = Seq.length textLines
-    patchEndCoord = Coord (bline + numLines - 1) (Text.lengthWord8 (getLastLine textLines) + if numLines == 1 then bcol else 0)
-    patchCoord c
-      | c < iv.begin = c
-      | c `inIv` iv = sanitizeCoord newDoc patchEndCoord
-      | iv.end <= c =
-        if c.line == iv.end.line
-        then Coord patchEndCoord.line (c.column - ecol + patchEndCoord.column)
-        else c { line = c.line - iv.end.line + patchEndCoord.line }
-      | otherwise = undefined
+    newDoc = Document . closeLines . combineLines firstHalf $ secondHalf
+    (firstHalf, secondHalf, _, genTranslate) = foldl' go (Seq.singleton "", doc.lines, id, id) mods
+    go (done, rest, offsetIv, gt) (iv, text) = (combineLines done before, after, offsetIv', gt')
+      where
+        (before, len, after, subgt) = patch1 (offsetIv iv) text rest
+        offsetIv' = mapIv (`subtractCoord` len) . offsetIv
+        gt' = gt . subgt
+    patch1 :: Iv -> Text -> Seq Text -> (Seq Text, Coord, Seq Text, (Coord -> Coord) -> Coord -> Coord)
+    patch1 iv text lns = (patched, afterBegin, after, translate)
+      where
+        textLines = toOpenLines text
+        (before, _) = splitLines iv.begin lns
+        (_, after) = splitLines iv.end lns
+        patched = combineLines before textLines
+        afterBegin = lengthLines patched
+        translate f c
+          | c < iv.begin = c
+          | c `inIv` iv = afterBegin
+          | iv.end <= c = f (c `subtractCoord` iv.end) `addCoord` afterBegin
+          | otherwise = undefined
+
+subtractCoord :: Coord -> Coord -> Coord
+subtractCoord a b = Coord (a.line - b.line) (if a.line == b.line then a.column - b.column else a.column)
+
+addCoord :: Coord -> Coord -> Coord
+addCoord a b = Coord (a.line + b.line) (if a.line == 0 then a.column + b.column else a.column)
 
 extract :: Iv -> Document -> Text
-extract (Iv (Coord bline bcol) (Coord eline ecol)) doc
-  | bline == eline = Text.dropWord8 (fromIntegral bcol) . Text.takeWord8 (fromIntegral ecol) . fromJust . Seq.lookup bline $ doc.lines
-  | bline > eline = undefined
-  | otherwise = firstLine <> wholeLines <> lastLine
-  where
-    firstLine = Text.dropWord8 (fromIntegral bcol) . fromJust . Seq.lookup bline $ doc.lines
-    wholeLines = foldMap (fromJust . flip Seq.lookup doc.lines) [ bline, bline + 1 .. eline - 1 ]
-    lastLine = Text.takeWord8 (fromIntegral ecol) . fromJust . Seq.lookup eline $ doc.lines
+extract iv doc
+  = fold
+  . fst . splitLines (iv.end `subtractCoord` iv.begin)
+  . snd . splitLines iv.begin
+  $ doc.lines
 
 getLine :: Int -> Document -> Text
 getLine n doc = fromJust . Seq.lookup n $ doc.lines
@@ -139,27 +141,6 @@ fromText = Document <$> closeLines . toOpenLines
 
 toText :: Document -> Text
 toText doc = fold doc.lines
-
-toOpenLines :: Text -> Seq Text
-toOpenLines text = fmap (<> "\n") initLines <> lastLines
-  where
-    -- lastLines = maybe (Seq.singleton "") (\(_, end) -> if end == '\n' then Seq.empty else Seq.singleton lastLine) . Text.unsnoc $ text
-    lastLines = Seq.singleton lastLine
-    (initLines, lastLine) = case Seq.viewr . Seq.fromList . Text.splitOn "\n" $ text of
-      s Seq.:> a -> (s, a)
-      Seq.EmptyR -> undefined
-
-getLastLine :: Seq Text -> Text
-getLastLine lns= case Seq.viewr lns of
-  Seq.EmptyR -> undefined
-  _ Seq.:> l -> l
-
-combineLines :: Seq Text -> Seq Text -> Seq Text
-combineLines Seq.Empty a = a
-combineLines a Seq.Empty = a
-combineLines x@(as Seq.:|> a) y@(b Seq.:<| bs)
-  | "\n" `Text.isSuffixOf` a = x <> y
-  | otherwise = as <> Seq.singleton (a <> b) <> bs
 
 breakAfterCoord :: ICU.Breaker a -> Document -> Coord -> [(ICU.Break a, Coord)]
 breakAfterCoord breaker doc (Coord line col) =
@@ -207,3 +188,49 @@ countBreaks breaker = Prelude.length . ICU.breaks breaker
 
 lastCharOffset :: Text -> Int
 lastCharOffset = Text.lengthWord8 . ICU.brkPrefix . last . ICU.breaks charBreaker
+
+------------------------ lines manipulation ------------------------
+
+toOpenLines :: Text -> Seq Text
+toOpenLines text = fmap (<> "\n") initLines Seq.|> lastLine
+  where
+    (initLines, lastLine) = unsnocLines . Seq.fromList . Text.splitOn "\n" $ text
+
+getLastLine :: Seq Text -> Text
+getLastLine = snd . unsnocLines
+
+combineLines :: Seq Text -> Seq Text -> Seq Text
+combineLines Seq.Empty a = a
+combineLines a Seq.Empty = a
+combineLines x@(as Seq.:|> a) y@(b Seq.:<| bs)
+  | "\n" `Text.isSuffixOf` a = x <> y
+  | otherwise = as <> Seq.singleton (a <> b) <> bs
+
+closeLines :: Seq Text -> Seq Text
+closeLines lns = case Seq.viewr lns of
+  as Seq.:> a
+    | Text.null a -> closeLines as
+    | otherwise -> lns
+  Seq.EmptyR -> Seq.singleton "\n"
+
+splitLines :: Coord -> Seq Text -> (Seq Text, Seq Text)
+splitLines c lns = (before Seq.|> prefix, if Text.null suffix then after else suffix Seq.<| after)
+  where
+    (before, notBefore) = Seq.splitAt c.line lns
+    (ln, after) = unconsLines notBefore
+    (prefix, suffix) = (Text.takeWord8 (fromIntegral c.column) ln, Text.dropWord8 (fromIntegral c.column) ln)
+
+lengthLines :: Seq Text -> Coord
+lengthLines lns = Coord (Seq.length wholeLns) (Text.lengthWord8 ln)
+  where
+    (wholeLns, ln) = unsnocLines lns
+
+unsnocLines :: Seq Text -> (Seq Text, Text)
+unsnocLines lns = case Seq.viewr lns of
+  xs Seq.:> x -> (xs, x)
+  Seq.EmptyR -> undefined
+
+unconsLines :: Seq Text -> (Text, Seq Text)
+unconsLines lns = case Seq.viewl lns of
+  x Seq.:< xs -> (x, xs)
+  Seq.EmptyL -> undefined

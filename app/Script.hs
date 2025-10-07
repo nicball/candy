@@ -8,6 +8,7 @@ import Control.Monad (when, void)
 import Data.Map qualified as Map
 import GHC.Generics (Generic(..), Selector(selName), K1(K1), M1(M1, unM1), (:*:)(..), D1, C1, S1)
 import Data.Kind (Type)
+import Data.IORef
 
 import HsLua hiding (Field, deftype, Type)
 import HsLua.Core.Utf8 qualified as Utf8
@@ -15,7 +16,8 @@ import HsLua.Core.Utf8 qualified as Utf8
 import Data.String.Interpolate (i)
 import Data.Text.IO qualified as Text
 import Data.Text (Text)
-import Data.IORef
+import Data.Coerce (coerce)
+import Config
 
 data Field a = forall b. (Pushable b, Peekable b) => Field
   { name :: Name
@@ -61,29 +63,16 @@ defType name fields methods = do
     fieldsMap = Map.fromList . fmap (\f -> (f.name, f)) $ fields
     methodsMap = Map.fromList . fmap (\m -> (m.name, m.action)) $ methods
 
-data Record1 = MkRecord1
-  { field1 :: Record2
-  }
-  deriving Generic
-
-data Record2 = MkRecord2
-  { field2 :: LuaPrim Int
-  }
-  deriving Generic
-
 test :: IO ()
 test = run do
   defGenericRecordType
   pop 1
-  pushGenericRecord =<< liftIO (newIORef (MkRecord1 (MkRecord2 (LuaPrim 42))))
-  setglobal "hsvalue"
+  pushGenericRecord (coerce config :: IORef (ConfigT (LuaPrim Float) (LuaPrim Int) (LuaPrim String)))
+  setglobal "config"
   openio
   setglobal "io"
   status <- dostringTrace [i|
-    io.write(hsvalue.field1.field2)
-    hsvalue.field1 = { field2 = 24 }
-    io.write(hsvalue.field1.field2)
-    io.flush()
+    config.primarySelectionForeground.red = 1
   |]
   case status of
     OK -> pure ()

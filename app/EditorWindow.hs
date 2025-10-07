@@ -92,7 +92,7 @@ instance SendKey DefaultEditorWindow where
             when (sel.mark /= Coord 0 0) do
               let
                 pos = Document.moveCoord doc (-1) sel.mark
-                (newDoc, translate) = Document.patch (Document.Iv pos sel.mark) "" doc
+                (newDoc, translate) = Document.patch [(Document.Iv pos sel.mark, "")] doc
               writeIORef dew.context.document newDoc
               Nexus.notify translate dew.context.onPatch
           (GMKNone, GLFW.Key'Delete) -> do
@@ -101,7 +101,7 @@ instance SendKey DefaultEditorWindow where
             when (sel.mark /= Document.endOfDocument doc) do
               let
                 len = Document.charLengthAt doc sel.mark
-                (newDoc, translate) = Document.patch (Document.Iv sel.mark sel.mark { column = sel.mark.column + len }) "" doc
+                (newDoc, translate) = Document.patch [(Document.Iv sel.mark sel.mark { column = sel.mark.column + len }, "")] doc
               writeIORef dew.context.document newDoc
               Nexus.notify translate dew.context.onPatch
           (GMKNone, GLFW.Key'Enter) -> sendChar '\n' dew
@@ -134,7 +134,7 @@ instance SendChar DefaultEditorWindow where
       InsertMode -> do
         sel <- readIORef dew.context.selection
         doc <- readIORef dew.context.document
-        let (newDoc, translate) = Document.patch (Document.Iv sel.mark sel.mark) (Text.singleton char) doc
+        let (newDoc, translate) = Document.patch [(Document.Iv sel.mark sel.mark, Text.singleton char)] doc
         writeIORef dew.context.document newDoc
         Nexus.notify translate dew.context.onPatch
     where
@@ -324,7 +324,7 @@ normalKeymap = Keymap
     , \ctx -> do
       sel <- readIORef ctx.selection
       doc <- readIORef ctx.document
-      let (newDoc, translate) = Document.patch (Selection.selToIv doc sel) "" doc
+      let (newDoc, translate) = Document.patch [(Selection.selToIv doc sel, "")] doc
       writeIORef ctx.document newDoc
       Nexus.notify translate ctx.onPatch
     )
@@ -342,7 +342,7 @@ normalKeymap = Keymap
         let
           len = Document.charLengthAt doc sel.mark
           c = sel.mark { column = sel.mark.column + len }
-        modifyIORef ctx.document (fst . Document.patch (Document.Iv c c) "\n")
+        modifyIORef ctx.document (fst . Document.patch [(Document.Iv c c, "\n")])
       doc' <- readIORef ctx.document
       writeIORef ctx.selection sel { mark = Document.moveCoord doc' 1 sel.mark }
       writeIORef ctx.insertExitCallback do
