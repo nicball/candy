@@ -154,13 +154,13 @@ drawText weaver texture colorspec text = assert (not . Text.null $ text) do
 textTexCache :: Cache (FaceID, ColorSpec, Text) (Texture, Resolution)
 textTexCache = unsafePerformIO $ newCache 500
 
-drawTextCached :: Weaver -> ColorSpec -> Text -> IO (Refcount (Texture, Resolution))
-drawTextCached weaver colorspec text = do
-  lookupCache (weaver.face, colorspec, text) new (deleteObject . fst) textTexCache
+drawTextCached :: FaceID -> ColorSpec -> Text -> IO (Refcount (Texture, Resolution))
+drawTextCached face colorspec text = do
+  lookupCache (face, colorspec, text) new (deleteObject . fst) textTexCache
   where
     new = do
       tex <- genObject
-      res <- drawText weaver tex colorspec text
+      res <- getWeaverCached face >>= flip withRefcount \weaver -> drawText weaver tex colorspec text
       pure (tex, res)
 
 {-# NOINLINE globalFtLib #-}

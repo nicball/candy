@@ -4,6 +4,7 @@ module Refcount
   , incRef
   , decRef
   , deref
+  , withRefcount
 
   , Cache
   , newCache
@@ -13,7 +14,7 @@ module Refcount
 
 import Data.IORef (IORef, newIORef, modifyIORef, readIORef, writeIORef)
 import Control.Monad (when)
-import Control.Exception (assert)
+import Control.Exception (assert, finally)
 import Data.Cache.LRU.IO qualified as LRU
 
 data Refcount a = Refcount
@@ -40,6 +41,11 @@ deref :: Refcount a -> IO a
 deref rc = do
   count <- readIORef rc.count
   assert (count > 0) (pure rc.value)
+
+withRefcount :: Refcount a -> (a -> IO b) -> IO b
+withRefcount rc action = do
+  incRef rc
+  action rc.value `finally` decRef rc
 
 newtype Cache k v = Cache (LRU.AtomicLRU k (Refcount v))
 

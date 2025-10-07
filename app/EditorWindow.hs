@@ -19,17 +19,16 @@ import GL (drawQuadColor, drawQuadTexture, quadFromBottomLeftWH, quadFromTopLeft
 import Raqm qualified
 import Selection (Selection(..))
 import Selection qualified
-import Weaver (drawTextCached, getFaceCached, getLineHeight, layoutTextCached, getWeaverCached, Weaver)
+import Weaver (drawTextCached, getFaceCached, getLineHeight, layoutTextCached)
 import Nexus (newNexus, ListenerID, Nexus)
 import Nexus qualified
 import Window (Draw(..), EditorWindow(..), Scroll(..), SendChar(..), SendKey(..), Status(..), Mode(..), GetBox(..), pattern GMKNone)
 import Box (drawableBox)
-import Refcount (decRef, deref, Refcount)
+import Refcount (withRefcount)
 
 data DefaultEditorWindow = DefaultEditorWindow
   { screenXPos :: IORef Int
   , screenYPos :: IORef Int
-  , weaver :: Refcount Weaver
   , context :: Context
   , keyMatchState :: IORef KeyCandidates
   , lastTextRes :: IORef Resolution
@@ -45,8 +44,6 @@ instance EditorWindow DefaultEditorWindow where
     lastTextRes <- newIORef $ Resolution 0 0
     context <- newContext document
     keyMatchState <- newIORef normalKeymap.candidates
-    face <- (.face) <$> readIORef config
-    weaver <- getWeaverCached face
     let name = Text.pack path
     minSize <- newIORef 1
     pure DefaultEditorWindow{..}
@@ -56,19 +53,16 @@ instance EditorWindow DefaultEditorWindow where
     lastTextRes <- newIORef $ Resolution 0 0
     context <- shareContext other.context
     keyMatchState <- newIORef normalKeymap.candidates
-    face <- (.face) <$> readIORef config
-    weaver <- getWeaverCached face
     let name = other.name
     minSize <- newIORef =<< readIORef other.minSize
     pure DefaultEditorWindow{..}
   close dew = do
-    decRef dew.weaver
     deleteContext dew.context
   getStatus w = Status <$> readIORef w.context.selection <*> readIORef w.context.mode <*> pure w.name
 
 instance Scroll DefaultEditorWindow where
   scroll _ y dew = do
-    height <- getLineHeight =<< deref =<< getFaceCached . (.face) =<< readIORef config
+    height <- flip withRefcount getLineHeight =<< getFaceCached . (.face) =<< readIORef config
     modifyIORef dew.screenYPos (max 0 . (\p -> p - truncate y * height))
 
 instance SendKey DefaultEditorWindow where
@@ -111,7 +105,7 @@ instance SendKey DefaultEditorWindow where
       ensureCursorRangeOnScreen = do
         cfg <- readIORef config
         sel <- readIORef dew.context.selection
-        height <- getLineHeight =<< deref =<< getFaceCached cfg.face
+        height <- flip withRefcount getLineHeight =<< getFaceCached cfg.face
         let markYPos = height * sel.mark.line
         markXPos <- getTarget dew.context
         screenYPos <- readIORef dew.screenYPos
@@ -148,9 +142,9 @@ instance Draw DefaultEditorWindow where
     cfg <- readIORef config
     clearViewport cfg.background
     document <- readIORef dew.context.document
-    height <- getLineHeight =<< deref =<< getFaceCached cfg.face
+    height <- flip withRefcount getLineHeight =<< getFaceCached cfg.face
     let margin = 20
-    digitWidth <- (`div` 64) . (.xAdvance) . (!! 0) <$> (Raqm.getGlyphs =<< deref =<< layoutTextCached cfg.face "0")
+    digitWidth <- (`div` 64) . (.xAdvance) . (!! 0) <$> (flip withRefcount Raqm.getGlyphs =<< layoutTextCached cfg.face "0")
     let lineNumberWidth = (+ 10) . (* digitWidth) . max 1 . ceiling . logBase 10 . (+ 1) . (fromIntegral :: Int -> Double) . Document.countLines $ document
     drawQuadColor posterSingleton res cfg.lineNumbersBackground $ quadFromTopLeftWH 0 0 lineNumberWidth res.h
     let textRes = Resolution (res.w - lineNumberWidth - margin) res.h
@@ -188,24 +182,23 @@ instance Draw DefaultEditorWindow where
       let quads = fmap (\(begin, end) -> (begin, end, cfg.primarySelectionBackground)) selRange
             ++ fmap (\pos -> (pos, pos, cfg.primaryCursorBackground)) cursorRange
       forM_ quads \(begin, end, color) -> do
-        rq <- deref =<< layoutTextCached cfg.face ln
-        xBegin <- if begin == 0 then pure 0 else Raqm.indexToXPosition rq (begin - 1)
-        xEnd <- if end == Text.lengthWord8 ln
-          then (+ cfg.face.sizePx `div` 2) <$> if end == 0 then pure 0 else Raqm.indexToXPosition rq (end - 1)
-          else Raqm.indexToXPosition rq end
-        drawQuadColor posterSingleton textRes color $ quadFromBottomLeftWH (xBegin - screenXPos) y (xEnd - xBegin + 1) height
-      weaver <- deref dew.weaver
+        layoutTextCached cfg.face ln >>= flip withRefcount \rq -> do
+          xBegin <- if begin == 0 then pure 0 else Raqm.indexToXPosition rq (begin - 1)
+          xEnd <- if end == Text.lengthWord8 ln
+            then (+ cfg.face.sizePx `div` 2) <$> if end == 0 then pure 0 else Raqm.indexToXPosition rq (end - 1)
+            else Raqm.indexToXPosition rq end
+          drawQuadColor posterSingleton textRes color $ quadFromBottomLeftWH (xBegin - screenXPos) y (xEnd - xBegin + 1) height
       when (not . Text.null $ ln) do
-        (lnTex, lnRes) <- deref =<< drawTextCached weaver (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 ln, cfg.foreground)]) ln
-        drawQuadTexture posterSingleton textRes lnTex $ quadFromBottomLeftWH (-screenXPos) y lnRes.w lnRes.h
+        drawTextCached cfg.face (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 ln, cfg.foreground)]) ln >>= flip withRefcount \(lnTex, lnRes) -> do
+          drawQuadTexture posterSingleton textRes lnTex $ quadFromBottomLeftWH (-screenXPos) y lnRes.w lnRes.h
       setSlot viewportSlot oldViewport
       let numFg = if idx == sel.mark.line
             then cfg.lineNumbersCurrentForeground
             else cfg.lineNumbersForeground
       when (idx == sel.mark.line) do
         drawQuadColor posterSingleton res cfg.lineNumbersCurrentBackground $ quadFromBottomLeftWH 0 y lineNumberWidth height
-      (numTex, numRes) <- deref =<< drawTextCached weaver [(0, 100, numFg)] (Text.pack (show idx))
-      drawQuadTexture posterSingleton res numTex $ quadFromBottomLeftWH 5 y numRes.w numRes.h
+      drawTextCached cfg.face [(0, 100, numFg)] (Text.pack (show idx)) >>= flip withRefcount \(numTex, numRes) -> do
+        drawQuadTexture posterSingleton res numTex $ quadFromBottomLeftWH 5 y numRes.w numRes.h
 
 stripNewLine :: Text -> Text
 stripNewLine t = if "\n" `Text.isSuffixOf` t then Text.dropEnd 1 t else t
@@ -373,8 +366,9 @@ normalKeymap = Keymap
           target <- maybe (getTarget ctx) pure sel.target
           let nextLine = stripNewLine . Document.getLine (sel.mark.line + 1) $ doc
           newCol <- if nextLine == "" then pure 0 else do
-            rqNext <- deref =<< flip layoutTextCached nextLine . (.face) =<< readIORef config
-            col <- Raqm.positionToIndex rqNext target 0
+            col <- flip withRefcount (\rqNext -> Raqm.positionToIndex rqNext target 0)
+              =<< flip layoutTextCached nextLine . (.face)
+              =<< readIORef config
             pure $ min col (Document.lastCharOffset nextLine)
           let newMark = Coord (sel.mark.line + 1) newCol
           pure $ SelectionWithTarget newMark newMark (Just target)
@@ -388,8 +382,9 @@ normalKeymap = Keymap
           target <- maybe (getTarget ctx) pure sel.target
           let prevLine = stripNewLine . Document.getLine (sel.mark.line - 1) $ doc
           newCol <- if prevLine == "" then pure 0 else do
-            rqPrev <- deref =<< flip layoutTextCached prevLine . (.face) =<< readIORef config
-            col <- Raqm.positionToIndex rqPrev target 0
+            col <- flip withRefcount (\rqPrev -> Raqm.positionToIndex rqPrev target 0)
+              =<< flip layoutTextCached prevLine . (.face)
+              =<< readIORef config
             pure $ min col (Document.lastCharOffset prevLine)
           let newMark = Coord (sel.mark.line - 1) newCol
           pure $ SelectionWithTarget newMark newMark (Just target)
@@ -405,11 +400,11 @@ getTarget ctx = do
   mark <- (.mark) <$> readIORef ctx.selection
   let line = Document.getLine mark.line doc
   face <- (.face) <$> readIORef config
-  rq <- deref =<< (layoutTextCached face . stripNewLine $ line)
-  after <- if mark.column == Text.lengthWord8 line - 1
-    then (+ face.sizePx `div` 2) <$> if mark.column == 0 then pure 0 else Raqm.indexToXPosition rq (mark.column - 1)
-    else Raqm.indexToXPosition rq mark.column
-  before <- if mark.column == 0
-    then pure 0
-    else Raqm.indexToXPosition rq (mark.column - 1)
-  pure $ (before + after) `div` 2
+  layoutTextCached face (stripNewLine line) >>= flip withRefcount \rq -> do
+    after <- if mark.column == Text.lengthWord8 line - 1
+      then (+ face.sizePx `div` 2) <$> if mark.column == 0 then pure 0 else Raqm.indexToXPosition rq (mark.column - 1)
+      else Raqm.indexToXPosition rq mark.column
+    before <- if mark.column == 0
+      then pure 0
+      else Raqm.indexToXPosition rq (mark.column - 1)
+    pure $ (before + after) `div` 2
