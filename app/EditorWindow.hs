@@ -2,25 +2,26 @@ module EditorWindow
   ( DefaultEditorWindow
   ) where
 
-import Control.Monad (forM_, join, when)
+import Control.Monad (forM, forM_, join, when)
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef, writeIORef)
 import Data.List (partition)
+import Data.List.NonEmpty qualified as NE
 import Data.Maybe (maybeToList)
+import Data.Semigroup (sconcat)
 import Data.Text.Foreign qualified as Text
-import Data.Text.IO qualified as Text
 import Data.Text qualified as Text
 import Data.Text (Text)
 import Graphics.UI.GLFW qualified as GLFW
 
 import Config (ConfigT(..), FaceIDT(..), config)
-import Document (Document, Coord(..))
+import Document (Document, Coord(..), DocumentType(..))
 import Document qualified
 import GL (drawQuadColor, drawQuadTexture, quadFromBottomLeftWH, quadFromTopLeftWH, quadToViewport, viewportSlot, posterSingleton, GLSlot(..), Resolution(..), clearViewport)
 import Raqm qualified
-import Selection (Selection(..))
+import Selection (Selection(..), Selections(..), translateSelections, mergeSelections, selToIv)
 import Selection qualified
 import Weaver (drawTextCached, getFaceCached, getLineHeight, layoutTextCached)
-import Nexus (newNexus, ListenerID, Nexus)
+import Nexus (ListenerID)
 import Nexus qualified
 import Window (Draw(..), EditorWindow(..), Scroll(..), SendChar(..), SendKey(..), Status(..), Mode(..), GetBox(..), pattern GMKNone)
 import Box (drawableBox)
@@ -29,36 +30,39 @@ import Refcount (withRefcount)
 data DefaultEditorWindow = DefaultEditorWindow
   { screenXPos :: IORef Int
   , screenYPos :: IORef Int
-  , context :: Context
   , keyMatchState :: IORef KeyCandidates
   , lastTextRes :: IORef Resolution
   , name :: Text
   , minSize :: IORef Int
+  , selections :: IORef Selections
+  , document :: Document
+  , onPatchToken :: ListenerID
+  , mode :: IORef Mode
+  , eatFirstChar :: IORef Bool
+  , insertExitCallback :: IORef (IO ())
   }
 
 instance EditorWindow DefaultEditorWindow where
-  fromPath path = do
+  new document = do
     screenXPos <- newIORef 0
     screenYPos <- newIORef 0
-    document <- Document.fromText <$> Text.readFile path
     lastTextRes <- newIORef $ Resolution 0 0
-    context <- newContext document
     keyMatchState <- newIORef normalKeymap.candidates
-    let name = Text.pack path
+    let name = case document.type_ of
+          FileBacked path -> Text.pack path
+          Scratch -> "*scratch*"
     minSize <- newIORef 1
+    selections <- newIORef . Selections . NE.singleton $ Selection (Coord 0 0) (Coord 0 0)
+    onPatchToken <- flip Nexus.addListener document.onPatch \translate -> do
+      modifyIORef selections (translateSelections translate)
+    mode <- newIORef NormalMode
+    eatFirstChar <- newIORef False
+    insertExitCallback <- newIORef (pure ())
     pure DefaultEditorWindow{..}
-  fork other = do
-    screenXPos <- newIORef 0
-    screenYPos <- newIORef 0
-    lastTextRes <- newIORef $ Resolution 0 0
-    context <- shareContext other.context
-    keyMatchState <- newIORef normalKeymap.candidates
-    let name = other.name
-    minSize <- newIORef =<< readIORef other.minSize
-    pure DefaultEditorWindow{..}
-  close dew = do
-    deleteContext dew.context
-  getStatus w = Status <$> readIORef w.context.selection <*> readIORef w.context.mode <*> pure w.name
+  fork other = new other.document
+  getDocument dew = pure dew.document
+  close dew = Nexus.removeListener dew.onPatchToken dew.document.onPatch
+  getStatus w = Status <$> readIORef w.selections <*> readIORef w.mode <*> pure w.name
 
 instance Scroll DefaultEditorWindow where
   scroll _ y dew = do
@@ -67,47 +71,38 @@ instance Scroll DefaultEditorWindow where
 
 instance SendKey DefaultEditorWindow where
   sendKey key mods dew = do
-    readIORef dew.context.mode >>= \case
+    readIORef dew.mode >>= \case
       NormalMode -> do
         (cmds, cands) <- updateKeyCandidates (mods, key) <$> readIORef dew.keyMatchState
         case cmds of
           [] -> writeIORef dew.keyMatchState (if null cands then normalKeymap.candidates else cands)
-          [cmd] -> cmd dew.context >> writeIORef dew.keyMatchState normalKeymap.candidates
+          [cmd] -> cmd dew >> writeIORef dew.keyMatchState normalKeymap.candidates
           _ -> error "invalid keymap"
       InsertMode -> do
         case (mods, key) of
           (GMKNone, GLFW.Key'Escape) -> do
-            join $ readIORef dew.context.insertExitCallback
-            writeIORef dew.context.insertExitCallback (pure ())
-            writeIORef dew.context.mode NormalMode
+            join $ readIORef dew.insertExitCallback
+            writeIORef dew.insertExitCallback (pure ())
+            writeIORef dew.mode NormalMode
           (GMKNone, GLFW.Key'Backspace) -> do
-            sel <- readIORef dew.context.selection
-            doc <- readIORef dew.context.document
-            when (sel.mark /= Coord 0 0) do
-              let
-                pos = Document.moveCoord doc (-1) sel.mark
-                (newDoc, translate) = Document.patch [(Document.Iv pos sel.mark, "")] doc
-              writeIORef dew.context.document newDoc
-              Nexus.notify translate dew.context.onPatch
+            sels <- filter ((/= Coord 0 0) . (.mark)) . NE.toList . (.value) <$> readIORef dew.selections
+            ivs <- traverse (\s -> flip Document.Iv s.mark <$> Document.moveCoord dew.document (-1) s.mark) sels
+            Document.patch (fmap (, "") ivs) dew.document
           (GMKNone, GLFW.Key'Delete) -> do
-            sel <- readIORef dew.context.selection
-            doc <- readIORef dew.context.document
-            when (sel.mark /= Document.endOfDocument doc) do
-              let
-                len = Document.charLengthAt doc sel.mark
-                (newDoc, translate) = Document.patch [(Document.Iv sel.mark sel.mark { column = sel.mark.column + len }, "")] doc
-              writeIORef dew.context.document newDoc
-              Nexus.notify translate dew.context.onPatch
+            end <- Document.endOfDocument dew.document
+            sels <- filter ((/= end) . (.mark)) . NE.toList . (.value) <$> readIORef dew.selections
+            ivs <- traverse (selToIv dew.document) sels
+            Document.patch (fmap (, "") ivs) dew.document
           (GMKNone, GLFW.Key'Enter) -> sendChar '\n' dew
           _ -> pure ()
     ensureCursorRangeOnScreen
     where
       ensureCursorRangeOnScreen = do
         cfg <- readIORef config
-        sel <- readIORef dew.context.selection
+        sel <- NE.head . (.value) <$> readIORef dew.selections
         height <- flip withRefcount getLineHeight =<< getFaceCached cfg.face
         let markYPos = height * sel.mark.line
-        markXPos <- getTarget dew.context
+        markXPos <- getTarget dew sel
         screenYPos <- readIORef dew.screenYPos
         screenXPos <- readIORef dew.screenXPos
         Resolution screenWidth screenHeight <- readIORef dew.lastTextRes
@@ -123,29 +118,26 @@ instance SendKey DefaultEditorWindow where
 
 instance SendChar DefaultEditorWindow where
   sendChar char dew = eatFirstChar do
-    readIORef dew.context.mode >>= \case
+    readIORef dew.mode >>= \case
       NormalMode -> pure ()
       InsertMode -> do
-        sel <- readIORef dew.context.selection
-        doc <- readIORef dew.context.document
-        let (newDoc, translate) = Document.patch [(Document.Iv sel.mark sel.mark, Text.singleton char)] doc
-        writeIORef dew.context.document newDoc
-        Nexus.notify translate dew.context.onPatch
+        ivs <- fmap (\s -> Document.Iv s.mark s.mark) . NE.toList . (.value) <$> readIORef dew.selections
+        Document.patch (fmap (, Text.singleton char) ivs) dew.document
     where
       eatFirstChar action =
-        readIORef dew.context.eatFirstChar >>= \case
-          True -> writeIORef dew.context.eatFirstChar False
+        readIORef dew.eatFirstChar >>= \case
+          True -> writeIORef dew.eatFirstChar False
           False -> action
 
 instance Draw DefaultEditorWindow where
   draw res dew = do
     cfg <- readIORef config
     clearViewport cfg.background
-    document <- readIORef dew.context.document
     height <- flip withRefcount getLineHeight =<< getFaceCached cfg.face
     let margin = 20
+    totalLines <- Document.countLines dew.document
     digitWidth <- (`div` 64) . (.xAdvance) . (!! 0) <$> (flip withRefcount Raqm.getGlyphs =<< layoutTextCached cfg.face "0")
-    let lineNumberWidth = (+ 10) . (* digitWidth) . max 1 . ceiling . logBase 10 . (+ 1) . (fromIntegral :: Int -> Double) . Document.countLines $ document
+    let lineNumberWidth = (+ 10) . (* digitWidth) . max 1 . ceiling . logBase 10 . (+ 1) . (fromIntegral :: Int -> Double) $ totalLines
     drawQuadColor posterSingleton res cfg.lineNumbersBackground $ quadFromTopLeftWH 0 0 lineNumberWidth res.h
     let textRes = Resolution (res.w - lineNumberWidth - margin) res.h
     writeIORef dew.lastTextRes textRes
@@ -157,30 +149,33 @@ instance Draw DefaultEditorWindow where
       linePos idx = height * (idx + 1) - screenYPos - 1
       numLines = res.h `divSat` height
       divSat a b = let (r, m) = divMod a b in if m /= 0 then r + 1 else r
-    sel <- readIORef dew.context.selection
+    sels <- (\(p NE.:| xs) -> (True, p) : fmap (False, ) xs) . (.value) <$> readIORef dew.selections
+    psel <- NE.head . (.value) <$> readIORef dew.selections
     oldViewport <- getSlot viewportSlot
-    forM_ [ beginLine, beginLine + 1 .. min (beginLine + numLines) (Document.countLines document - 1) ] \idx -> do
+    forM_ [ beginLine, beginLine + 1 .. min (beginLine + numLines) (totalLines - 1) ] \idx -> do
       setSlot viewportSlot . flip quadToViewport oldViewport $ quadFromTopLeftWH (lineNumberWidth + margin) 0 (res.w - lineNumberWidth - margin) res.h
       let y = linePos idx
-      let ln = stripNewLine . Document.getLine idx $ document
-      let selRange = maybeToList . Selection.selAtLine document sel $ idx
-      let selColorSpec = fmap
-            (\(begin, end) ->
-              ( begin
-              , end + Document.charLengthAt document (Coord idx end)
-              , cfg.primarySelectionForeground
-              ))
-            selRange
-      let cursorRange = [ sel.mark.column | idx == sel.mark.line ]
-      let cursorColorSpec = fmap
-            (\pos ->
-              ( pos
-              , pos + Document.charLengthAt document (Coord idx pos)
-              , cfg.primaryCursorForeground
-              ))
-            cursorRange
-      let quads = fmap (\(begin, end) -> (begin, end, cfg.primarySelectionBackground)) selRange
-            ++ fmap (\pos -> (pos, pos, cfg.primaryCursorBackground)) cursorRange
+      ln <- stripNewLine <$> Document.getLine idx dew.document
+      selRange <- concat <$> forM sels \(p, s) -> do
+        range <- maybeToList <$> Selection.selAtLine dew.document s idx
+        pure . fmap (\(b, e) -> (p, b, e)) $ range
+      selColorSpec <- forM selRange \(p, begin, end) -> do
+        len <- Document.charLengthAt dew.document (Coord idx end)
+        pure
+          ( begin
+          , end + len
+          , if p then cfg.primarySelectionForeground else cfg.secondarySelectionForeground
+          )
+      let cursorRange = [ (p, s.mark.column) | (p, s) <- sels, s.mark.line == idx ]
+      cursorColorSpec <- forM cursorRange \(p, pos) -> do
+        len <- Document.charLengthAt dew.document (Coord idx pos)
+        pure
+          ( pos
+          , pos + len
+          , if p then cfg.primaryCursorForeground else cfg.secondaryCursorForeground
+          )
+      let quads = fmap (\(p, begin, end) -> (begin, end, if p then cfg.primarySelectionBackground else cfg.secondarySelectionBackground)) selRange
+            ++ fmap (\(p, pos) -> (pos, pos, if p then cfg.primaryCursorBackground else cfg.secondaryCursorBackground)) cursorRange
       forM_ quads \(begin, end, color) -> do
         layoutTextCached cfg.face ln >>= flip withRefcount \rq -> do
           xBegin <- if begin == 0 then pure 0 else Raqm.indexToXPosition rq (begin - 1)
@@ -192,10 +187,10 @@ instance Draw DefaultEditorWindow where
         drawTextCached cfg.face (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 ln, cfg.foreground)]) ln >>= flip withRefcount \(lnTex, lnRes) -> do
           drawQuadTexture posterSingleton textRes lnTex $ quadFromBottomLeftWH (-screenXPos) y lnRes.w lnRes.h
       setSlot viewportSlot oldViewport
-      let numFg = if idx == sel.mark.line
+      let numFg = if idx == psel.mark.line
             then cfg.lineNumbersCurrentForeground
             else cfg.lineNumbersForeground
-      when (idx == sel.mark.line) do
+      when (idx == psel.mark.line) do
         drawQuadColor posterSingleton res cfg.lineNumbersCurrentBackground $ quadFromBottomLeftWH 0 y lineNumberWidth height
       drawTextCached cfg.face [(0, 100, numFg)] (Text.pack (show idx)) >>= flip withRefcount \(numTex, numRes) -> do
         drawQuadTexture posterSingleton res numTex $ quadFromBottomLeftWH 5 y numRes.w numRes.h
@@ -208,43 +203,7 @@ instance GetBox DefaultEditorWindow where
     s <- readIORef dew.minSize
     pure . drawableBox (Resolution s s) True True $ dew
 
-data Context = Context
-  { selection :: IORef Selection
-  , document :: IORef Document
-  , onPatch :: Nexus (Coord -> Coord)
-  , onPatchToken :: ListenerID
-  , mode :: IORef Mode
-  , eatFirstChar :: IORef Bool
-  , insertExitCallback :: IORef (IO ())
-  }
-
-newContext :: Document -> IO Context
-newContext doc = do
-  document <- newIORef doc
-  onPatch <- newNexus
-  selection <- newIORef (Selection (Coord 0 0) (Coord 0 0))
-  onPatchToken <- flip Nexus.addListener onPatch \move -> do
-    modifyIORef selection \sel -> Selection (move sel.anchor) (move sel.mark)
-  mode <- newIORef NormalMode
-  eatFirstChar <- newIORef False
-  insertExitCallback <- newIORef (pure ())
-  pure Context{..}
-
-shareContext :: Context -> IO Context
-shareContext Context{document, onPatch} = do
-  selection <- newIORef (Selection (Coord 0 0) (Coord 0 0))
-  onPatchToken <- flip Nexus.addListener onPatch \move -> do
-    modifyIORef selection \sel -> Selection (move sel.anchor) (move sel.mark)
-  mode <- newIORef NormalMode
-  eatFirstChar <- newIORef False
-  insertExitCallback <- newIORef (pure ())
-  pure Context{..}
-
-deleteContext :: Context -> IO ()
-deleteContext context = do
-  Nexus.removeListener context.onPatchToken context.onPatch
-
-type Command = Context -> IO ()
+type Command = DefaultEditorWindow-> IO ()
 
 type KeyCandidates = [([(GLFW.ModifierKeys, GLFW.Key)], Command)]
 newtype Keymap = Keymap { candidates :: KeyCandidates }
@@ -306,99 +265,118 @@ normalKeymap = Keymap
     , movement Selection.expandToLine
     )
   , ( [(noneMod, GLFW.Key'G), (noneMod, GLFW.Key'L)]
-    , movement \doc sel ->
-      let
-        end = (\t -> if t == "" then 0 else Document.lastCharOffset t) . Text.dropEnd 1 . Document.getLine sel.mark.line $ doc
-        mark = Coord sel.mark.line end
-      in
-      Selection mark mark
+    , movement \doc sel -> do
+      end <- (\t -> if t == "" then 0 else Document.lastCharOffset t) . Text.dropEnd 1 <$> Document.getLine sel.mark.line doc
+      let mark = Coord sel.mark.line end
+      pure . NE.singleton $ Selection mark mark
     )
   , ( [(noneMod, GLFW.Key'D)]
-    , \ctx -> do
-      sel <- readIORef ctx.selection
-      doc <- readIORef ctx.document
-      let (newDoc, translate) = Document.patch [(Selection.selToIv doc sel, "")] doc
-      writeIORef ctx.document newDoc
-      Nexus.notify translate ctx.onPatch
+    , \dew -> do
+      ivs <- traverse (selToIv dew.document) . NE.toList . (.value) =<< readIORef dew.selections
+      Document.patch (fmap (, "") ivs) dew.document
     )
   , ( [(noneMod, GLFW.Key'I)]
-    , \ctx -> do
-      modifyIORef ctx.selection Selection.turnLeft
-      enterInsert ctx
+    , \dew -> do
+      modifyIORef dew.selections (Selections . fmap Selection.turnLeft . (.value))
+      enterInsert dew
     )
   , ( [(noneMod, GLFW.Key'A)]
-    , \ctx -> do
-      modifyIORef ctx.selection Selection.turnRight
-      sel <- readIORef ctx.selection
-      doc <- readIORef ctx.document
-      when (sel.mark == Document.endOfDocument doc) do
-        let
-          len = Document.charLengthAt doc sel.mark
-          c = sel.mark { column = sel.mark.column + len }
-        modifyIORef ctx.document (fst . Document.patch [(Document.Iv c c, "\n")])
-      doc' <- readIORef ctx.document
-      writeIORef ctx.selection sel { mark = Document.moveCoord doc' 1 sel.mark }
-      writeIORef ctx.insertExitCallback do
-        doc'' <- readIORef ctx.document
-        modifyIORef ctx.selection \sel' ->
+    , \dew -> do
+      modifyIORef dew.selections (Selections . fmap Selection.turnRight . (.value))
+      sels <- (.value) <$> readIORef dew.selections
+      end <- Document.endOfDocument dew.document
+      when (any (\s -> s.mark == end) sels) do
+        len <- Document.charLengthAt dew.document end
+        let c = end { column = end.column + len }
+        Document.patch [(Document.Iv c c, "\n")] dew.document
+      newSels <- forM sels \sel -> do
+        newMark <- Document.moveCoord dew.document 1 sel.mark
+        pure sel { mark = newMark }
+      writeIORef dew.selections (Selections newSels)
+      writeIORef dew.insertExitCallback do
+        sels' <- (.value) <$> readIORef dew.selections
+        newSels' <- forM sels' \sel' -> do
           if sel'.anchor < sel'.mark
-          then sel' { mark = Document.moveCoord doc'' (-1) sel'.mark }
-          else sel'
-      enterInsert ctx
+            then do
+              newMark <- Document.moveCoord dew.document (-1) sel'.mark
+              pure sel' { mark = newMark }
+            else
+              pure sel'
+        writeIORef dew.selections (Selections newSels')
+      enterInsert dew
     )
   , ( [(shiftMod, GLFW.Key'5)]
-    , movement \doc _ -> Selection (Coord 0 0) (Document.endOfDocument doc)
+    , movement \doc _ -> do
+      end <- Document.endOfDocument doc
+      pure . NE.singleton $ Selection (Coord 0 0) end
     )
   , ( [(altMod, GLFW.Key'Semicolon)]
-    , movement . const $ Selection.alternate
+    , movement . const $ pure . NE.singleton . Selection.alternate
     )
   , ( [(noneMod, GLFW.Key'Semicolon)]
-    , movement . const $ \sel -> sel { anchor = sel.mark }
+    , movement . const $ \sel -> pure . NE.singleton $ sel { anchor = sel.mark }
+    )
+  , ( [(noneMod, GLFW.Key'Comma)]
+    , \dew -> do
+      Selections (p NE.:| _) <- readIORef dew.selections
+      writeIORef dew.selections . Selections . NE.singleton $ p
+    )
+  , ( [(altMod, GLFW.Key'S)]
+    , movement Selection.splitByLine
     )
   ]
   where
-    movement m ctx = modifyIORef ctx.selection . m =<< readIORef ctx.document
-    moveDown ext ctx = do
-      sel <- readIORef ctx.selection
-      doc <- readIORef ctx.document
-      newSel <- if sel.mark.line /= Document.countLines doc - 1
-        then do
-          target <- maybe (getTarget ctx) pure sel.target
-          let nextLine = stripNewLine . Document.getLine (sel.mark.line + 1) $ doc
-          newCol <- if nextLine == "" then pure 0 else do
-            col <- flip withRefcount (\rqNext -> Raqm.positionToIndex rqNext target 0)
-              =<< flip layoutTextCached nextLine . (.face)
-              =<< readIORef config
-            pure $ min col (Document.lastCharOffset nextLine)
-          let newMark = Coord (sel.mark.line + 1) newCol
-          pure $ SelectionWithTarget newMark newMark (Just target)
-        else pure $ Selection sel.mark sel.mark
-      modifyIORef ctx.selection . ext (\_ _ -> newSel) $ doc
-    moveUp ext ctx = do
-      sel <- readIORef ctx.selection
-      doc <- readIORef ctx.document
-      newSel <- if sel.mark.line /= 0
-        then do
-          target <- maybe (getTarget ctx) pure sel.target
-          let prevLine = stripNewLine . Document.getLine (sel.mark.line - 1) $ doc
-          newCol <- if prevLine == "" then pure 0 else do
-            col <- flip withRefcount (\rqPrev -> Raqm.positionToIndex rqPrev target 0)
-              =<< flip layoutTextCached prevLine . (.face)
-              =<< readIORef config
-            pure $ min col (Document.lastCharOffset prevLine)
-          let newMark = Coord (sel.mark.line - 1) newCol
-          pure $ SelectionWithTarget newMark newMark (Just target)
-        else pure $ Selection sel.mark sel.mark
-      modifyIORef ctx.selection . ext (\_ _ -> newSel) $ doc
-    enterInsert ctx = do
-      writeIORef ctx.eatFirstChar True
-      writeIORef ctx.mode InsertMode
+    movement m dew = do
+      sels <- (.value) <$> readIORef dew.selections
+      newSels <- sconcat <$> traverse (m dew.document) sels
+      writeIORef dew.selections (mergeSelections (Selections newSels))
+    moveDown ext dew = do
+      sels <- (.value) <$> readIORef dew.selections
+      newSels <- sconcat <$> traverse moveOne sels
+      writeIORef dew.selections (mergeSelections (Selections newSels))
+      where
+        moveOne sel = do
+          numLines <- Document.countLines dew.document
+          newSel <- if sel.mark.line /= numLines - 1
+            then do
+              target <- maybe (getTarget dew sel) pure sel.target
+              nextLine <- stripNewLine <$> Document.getLine (sel.mark.line + 1) dew.document
+              newCol <- if nextLine == "" then pure 0 else do
+                col <- flip withRefcount (\rqNext -> Raqm.positionToIndex rqNext target 0)
+                  =<< flip layoutTextCached nextLine . (.face)
+                  =<< readIORef config
+                pure $ min col (Document.lastCharOffset nextLine)
+              let newMark = Coord (sel.mark.line + 1) newCol
+              pure $ SelectionWithTarget newMark newMark (Just target)
+            else pure $ Selection sel.mark sel.mark
+          ext (\_ _ -> pure . NE.singleton $ newSel) dew.document sel
+    moveUp ext dew = do
+      sels <- (.value) <$> readIORef dew.selections
+      newSels <- sconcat <$> traverse moveOne sels
+      writeIORef dew.selections (mergeSelections (Selections newSels))
+      where
+        moveOne sel = do
+          newSel <- if sel.mark.line /= 0
+            then do
+              target <- maybe (getTarget dew sel) pure sel.target
+              prevLine <- stripNewLine <$> Document.getLine (sel.mark.line - 1) dew.document
+              newCol <- if prevLine == "" then pure 0 else do
+                col <- flip withRefcount (\rqPrev -> Raqm.positionToIndex rqPrev target 0)
+                  =<< flip layoutTextCached prevLine . (.face)
+                  =<< readIORef config
+                pure $ min col (Document.lastCharOffset prevLine)
+              let newMark = Coord (sel.mark.line - 1) newCol
+              pure $ SelectionWithTarget newMark newMark (Just target)
+            else pure $ Selection sel.mark sel.mark
+          ext (\_ _ -> pure . NE.singleton $ newSel) dew.document sel
+    enterInsert dew = do
+      writeIORef dew.eatFirstChar True
+      writeIORef dew.mode InsertMode
 
-getTarget :: Context -> IO Int
-getTarget ctx = do
-  doc <- readIORef ctx.document
-  mark <- (.mark) <$> readIORef ctx.selection
-  let line = Document.getLine mark.line doc
+getTarget :: DefaultEditorWindow -> Selection -> IO Int
+getTarget dew sel = do
+  let mark = sel.mark
+  line <- Document.getLine mark.line dew.document
   face <- (.face) <$> readIORef config
   layoutTextCached face (stripNewLine line) >>= flip withRefcount \rq -> do
     after <- if mark.column == Text.lengthWord8 line - 1

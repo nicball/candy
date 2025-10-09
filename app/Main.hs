@@ -14,14 +14,14 @@ import WindowManager
 import EditorWindow
 import Bar
 import Script
+import Document
 
 main :: IO ()
 main = do
-  test
   withGLFW . withWindow 800 600 "Candy" $ \win -> do
     setSlot blendSlot True
     glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
-    ew <- fromPath "./app/Window.hs" :: IO DefaultEditorWindow
+    ew <- new =<< fromFile "./app/Window.hs" :: IO DefaultEditorWindow
     withDefaultWindowManager ew \wm -> do
       withDefaultBar \bar -> do
         setBar bar wm

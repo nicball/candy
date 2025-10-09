@@ -40,6 +40,10 @@ data ConfigT f i s = Config
   , primarySelectionBackground :: ColorT f
   , primaryCursorForeground :: ColorT f
   , primaryCursorBackground :: ColorT f
+  , secondarySelectionForeground :: ColorT f
+  , secondarySelectionBackground :: ColorT f
+  , secondaryCursorForeground :: ColorT f
+  , secondaryCursorBackground :: ColorT f
   , cursorVerticalRangeOnScreen :: (f, f)
   , cursorHorizontalRangeOnScreen :: (f, f)
   , lineNumbersForeground :: ColorT f
@@ -110,6 +114,10 @@ config = unsafePerformIO . newIORef $ Config
   , primarySelectionBackground = nord10
   , primaryCursorForeground = nord0
   , primaryCursorBackground = nord8
+  , secondarySelectionForeground = nord0
+  , secondarySelectionBackground = nord9
+  , secondaryCursorForeground = nord0
+  , secondaryCursorBackground = nord7
   , cursorVerticalRangeOnScreen = (0.1, 0.9)
   , cursorHorizontalRangeOnScreen = (0.1, 0.9)
   , lineNumbersForeground = nord3

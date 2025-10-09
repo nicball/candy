@@ -32,7 +32,7 @@ data BarBox = BarBox
 newBarBox :: Status -> IO BarBox
 newBarBox status = do
   cfg <- readIORef config
-  let text = (status.name <>) . Text.pack $ " " <> show status.mode <> " " <> show status.selection
+  let text = (status.name <>) . Text.pack $ " " <> show status.mode <> " " <> show status.selections
   textTexture <- drawTextCached cfg.face [(0, Text.lengthWord8 text, cfg.barForeground)] text
   incRef textTexture
   (textTex, textRes) <- deref textTexture

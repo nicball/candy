@@ -15,15 +15,23 @@ module Selection
   , selectToWordStart
   , selectToWordBegin
   , expandToLine
+  , splitByLine
   , turnLeft
   , turnRight
+  , Selections(..)
+  , translateSelections
+  , mergeSelections
   ) where
 
+import Control.Monad (forM)
 import Data.Char qualified as Char
-import Data.Maybe (listToMaybe)
+import Data.Maybe (listToMaybe, fromJust)
 import Data.Text.ICU qualified as ICU
 import Data.Text.Foreign qualified as Text
 import Data.Text qualified as Text
+import Data.List.NonEmpty (NonEmpty)
+import Data.List.NonEmpty qualified as NE
+import Data.List (partition, sortOn)
 
 import Document (breakAfterCoord, breakBeforeCoord, charBreaker, countBreaks, moveCoord, wordBreaker, Coord(..), Document, lastCharOffset, Iv(..), countLines, lastCharOffset, charLengthAt)
 import Document qualified
@@ -49,55 +57,60 @@ selMin (Selection a b) = min a b
 selMax :: Selection -> Coord
 selMax (Selection a b) = max a b
 
-selToIv :: Document -> Selection -> Iv
-selToIv doc sel = Iv (selMin sel) end
-  where
-    m@(Coord line _) = selMax sel
-    next = moveCoord doc 1 m
-    end = if next == m
-      then Coord line (Text.lengthWord8 (Document.getLine line doc))
-      else next
+selToIv :: Document -> Selection -> IO Iv
+selToIv doc sel = do
+  let m@(Coord line _) = selMax sel
+  next <- moveCoord doc 1 m
+  end <- if next == m
+    then Coord line . Text.lengthWord8 <$> Document.getLine line doc
+    else pure next
+  pure $ Iv (selMin sel) end
 
-ivToSel :: Document -> Iv -> Selection
-ivToSel doc iv = Selection iv.begin end
-  where
-    Coord line col = iv.end
-    end = if line == countLines doc - 1 && col == Text.lengthWord8 lineText
-      then Coord line (lastCharOffset lineText)
-      else moveCoord doc (-1) iv.end
-    lineText = Document.getLine line doc
+ivToSel :: Document -> Iv -> IO Selection
+ivToSel doc iv = do
+  let Coord line col = iv.end
+  lineText <- Document.getLine line doc
+  numLines <- countLines doc
+  end <- if line == numLines - 1 && col == Text.lengthWord8 lineText
+    then pure . Coord line . lastCharOffset $ lineText
+    else moveCoord doc (-1) iv.end
+  pure $ Selection iv.begin end
 
-selAtLine :: Document -> Selection -> Int -> Maybe (Int, Int)
+selAtLine :: Document -> Selection -> Int -> IO (Maybe (Int, Int))
 selAtLine _ (Selection (Coord aln acol) (Coord mln mcol)) ln | aln == mln =
   if aln == ln
-    then Just (min acol mcol, max acol mcol)
-    else Nothing
+    then pure . Just $ (min acol mcol, max acol mcol)
+    else pure Nothing
 selAtLine doc sel ln = if
-  | bln == ln -> Just (bcol, lastCharOffset . Document.getLine bln $ doc)
-  | bln < ln && ln < eln -> Just (0, lastCharOffset . Document.getLine ln $ doc)
-  | ln == eln -> Just (0, ecol)
-  | otherwise -> Nothing
+  | bln == ln -> Just . (bcol, ) . lastCharOffset <$> Document.getLine bln doc
+  | bln < ln && ln < eln -> Just . (0, ) . lastCharOffset <$> Document.getLine ln doc
+  | ln == eln -> pure . Just $ (0, ecol)
+  | otherwise -> pure Nothing
   where
     (Coord bln bcol, Coord eln ecol) = (selMin sel, selMax sel)
 
-type Movement = Document -> Selection -> Selection
+type Movement = Document -> Selection -> IO (NonEmpty Selection)
 
 extend :: Movement -> Movement
-extend move doc sel = (move doc sel) { anchor = sel.anchor }
+extend move doc sel = do
+  sels <- move doc sel
+  pure $ fmap (\s -> s { anchor = sel.anchor }) sels
 
 moveRight :: Movement
-moveRight doc sel = Selection c c
-  where c = moveCoord doc 1 sel.mark
+moveRight doc sel = do
+  c <- moveCoord doc 1 sel.mark
+  pure . NE.singleton $ Selection c c
 
 moveLeft :: Movement
-moveLeft doc sel = Selection c c  
-  where c = moveCoord doc (-1) sel.mark
+moveLeft doc sel = do
+  c <- moveCoord doc (-1) sel.mark
+  pure . NE.singleton $ Selection c c
 
 selectToWordEnd :: Movement
 selectToWordEnd doc SelectionWithTarget{mark = curr} =
-  case findAnchor . breakAfterCoord wordBreaker doc $ curr of
-    Nothing -> Selection curr curr
-    Just anchor -> Selection anchor . breakEndCoord . findMark . breakAfterCoord wordBreaker doc $ anchor
+  findAnchor <$> breakAfterCoord wordBreaker doc curr >>= \case
+    Nothing -> pure . NE.singleton $ Selection curr curr
+    Just anchor -> NE.singleton . Selection anchor . breakEndCoord . findMark <$> breakAfterCoord wordBreaker doc anchor
   where
     isSpace = Text.all (\c -> Char.isSpace c && c /= '\n')
     findAnchor (x : xs) = if (<= 1) . countBreaks charBreaker . ICU.brkBreak . fst $ x
@@ -113,9 +126,9 @@ selectToWordEnd doc SelectionWithTarget{mark = curr} =
 
 selectToWordStart :: Movement
 selectToWordStart doc SelectionWithTarget{mark = curr} =
-  case findAnchor . breakAfterCoord wordBreaker doc $ curr of
-    Nothing -> Selection curr curr
-    Just anchor -> Selection anchor . breakEndCoord . findMark . breakAfterCoord wordBreaker doc $ anchor
+  findAnchor <$> breakAfterCoord wordBreaker doc curr >>= \case
+    Nothing -> pure . NE.singleton $ Selection curr curr
+    Just anchor -> NE.singleton . Selection anchor . breakEndCoord . findMark <$> breakAfterCoord wordBreaker doc anchor
   where
     isSpace = Text.all (\c -> Char.isSpace c && c /= '\n')
     findAnchor (x : xs) = if (<= 1) . countBreaks charBreaker . ICU.brkBreak . fst $ x
@@ -130,13 +143,13 @@ selectToWordStart doc SelectionWithTarget{mark = curr} =
 
 selectToWordBegin :: Movement
 selectToWordBegin doc SelectionWithTarget{mark = curr} =
-  case findAnchor . breakBeforeCoord wordBreaker doc . forceNext $ curr of
-    Nothing -> Selection curr curr
-    Just anchor -> case findMark . breakBeforeCoord wordBreaker doc . forceNext $ anchor of
-      Just (_, mark) -> Selection anchor mark
-      Nothing -> Selection anchor anchor
+  findAnchor <$> (breakBeforeCoord wordBreaker doc =<< forceNext curr) >>= \case
+    Nothing -> pure . NE.singleton $ Selection curr curr
+    Just anchor -> findMark <$> (breakBeforeCoord wordBreaker doc =<< forceNext anchor) >>= \case
+      Just (_, mark) -> pure . NE.singleton $ Selection anchor mark
+      Nothing -> pure . NE.singleton $ Selection anchor anchor
   where
-    forceNext c = Coord c.line (c.column + charLengthAt doc c)
+    forceNext c = Coord c.line . (c.column +) <$> charLengthAt doc c
     isSpace = Text.all (\c -> Char.isSpace c && c /= '\n')
     findAnchor (x : xs) = if (<= 1) . countBreaks charBreaker . ICU.brkBreak . fst $ x
       then fmap breakEndCoord . listToMaybe . dropWhile ((== "\n") . ICU.brkBreak . fst) $ xs
@@ -152,8 +165,16 @@ selectToWordBegin doc SelectionWithTarget{mark = curr} =
 expandToLine :: Movement
 expandToLine doc sel =
   if sel.anchor <= sel.mark
-  then Selection (Coord sel.anchor.line 0) (Coord sel.mark.line (lastCharOffset (Document.getLine sel.mark.line doc)))
-  else Selection (Coord sel.anchor.line (lastCharOffset (Document.getLine sel.anchor.line doc))) (Coord sel.mark.line 0)
+  then NE.singleton . Selection (Coord sel.anchor.line 0) . Coord sel.mark.line . lastCharOffset <$> Document.getLine sel.mark.line doc
+  else NE.singleton . flip Selection (Coord sel.mark.line 0) . Coord sel.anchor.line . lastCharOffset <$> Document.getLine sel.anchor.line doc
+
+splitByLine :: Movement
+splitByLine doc sel = setPrim <$> forM (NE.fromList [(selMin sel).line .. (selMax sel).line]) \ln -> do
+    (a, b) <- fromJust <$> selAtLine doc sel ln
+    pure . turn $ Selection (Coord ln a) (Coord ln b)
+    where
+      turn = if sel.anchor <= sel.mark then id else turnLeft
+      setPrim xs = if sel.anchor <= sel.mark then NE.last xs NE.:| NE.init xs else xs
 
 turnLeft :: Selection -> Selection
 turnLeft (Selection anchor mark) | anchor < mark = Selection mark anchor
@@ -165,3 +186,33 @@ turnRight sel = sel
 
 breakEndCoord :: (ICU.Break a, Coord) -> Coord
 breakEndCoord (brk, Coord line col) = Coord line (col + lastCharOffset (ICU.brkBreak brk))
+
+newtype Selections = Selections { value :: NonEmpty Selection }
+
+translateSelections :: (Coord -> Coord) -> Selections -> Selections
+translateSelections f (Selections s) = mergeSelections . Selections . fmap (\(Selection a m) -> Selection (f a) (f m)) $ s
+
+mergeSelections :: Selections -> Selections
+mergeSelections = fromList . merge [] . toList
+  where
+    toList (Selections (p NE.:| ss)) = sortOn (selMin . snd) $ (True, p) : fmap (False, ) ss
+    fromList ls = case partition fst $ ls of
+      ([(_, p)], ss) -> Selections $ p NE.:| fmap snd ss
+      _ -> undefined
+    merge [] (s : ss) = merge [s] ss
+    merge ((lp, l) : ls) ((sp, s) : ss) = case mergeSel l s of
+      Nothing -> merge ((sp, s) : (lp, l) : ls) ss
+      Just l' -> merge ((lp || sp, l') : ls) ss
+    merge ss [] = reverse ss
+    mergeSel a b =
+      if selMax a >= selMin b
+        then Just $ turn (Selection (selMin a) (selMax b))
+        else Nothing
+      where turn = if a.anchor > a.mark then turnLeft else id
+
+instance Show Selections where
+  show (Selections sels@(p NE.:| xs)) = show p ++ num
+    where
+      num
+        | null xs = ""
+        | otherwise = "(" ++ show (NE.length sels) ++ ")"

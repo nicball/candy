@@ -18,9 +18,11 @@ module Window
   ) where
 
 import Graphics.UI.GLFW qualified as GLFW
+
 import GL (Resolution)
-import Selection (Selection)
+import Selection (Selections)
 import Data.Text (Text)
+import Document (Document)
 
 class Scroll a where
   scroll :: Double -> Double -> a -> IO ()
@@ -56,7 +58,8 @@ class (Scroll a, SendKey a, SendChar a, Draw a) => WindowManager a where
   setBar :: Bar w => w -> a -> IO ()
 
 class (Scroll a, SendKey a, SendChar a, GetBox a) => EditorWindow a where
-  fromPath :: FilePath -> IO a
+  new :: Document -> IO a
+  getDocument :: a -> IO Document
   fork :: a -> IO a
   close :: a -> IO ()
   getStatus :: a -> IO Status
@@ -65,7 +68,7 @@ class GetBox a => Bar a where
   setStatus :: a -> Status -> IO ()
 
 data Status = Status
-  { selection :: Selection
+  { selections :: Selections
   , mode :: Mode
   , name :: Text
   }
