@@ -415,14 +415,35 @@ newPoster = do
         \#version 330 core
         uniform vec4 f_color;
         uniform sampler2D tex;
-        uniform bool use_texture;
+        uniform int mode;
+        uniform int thickness;
+        uniform ivec4 quad;
+        uniform ivec4 viewport;
+        layout(pixel_center_integer) in vec4 gl_FragCoord;
         in vec2 f_tpos;
         out vec4 color;
         void main() {
-          if (use_texture)
+          switch (mode) {
+          case 0:
             color = texture(tex, f_tpos);
-          else
-            color = f_color;
+            break;
+          case 1:
+            if (thickness == -1)
+              color = f_color;
+            else {
+              ivec2 pos = ivec2(
+                int(gl_FragCoord.x) - viewport.x,
+                viewport.w - (int(gl_FragCoord.y) - viewport.y) - 1
+              );
+              int xDist = min(pos.x - quad.x, quad.x + quad.z - 1 - pos.x);
+              int yDist = min(pos.y - quad.y, quad.y + quad.w - 1 - pos.y);
+              if (xDist < thickness || yDist < thickness)
+                color = f_color;
+              else
+                color = vec4(0, 0, 0, 0);
+            }
+            break;
+          }
         }
       |]
 
@@ -496,8 +517,10 @@ drawQuadColor poster res color quad = do
         writeArrayBuffer $
           pixelQuadToNDC res quad ++
           [ 0, 0, 0, 0, 0, 0, 0, 0 ]
-        uUseTexture <- C.withCAString "use_texture" (glGetUniformLocation poster.prog)
-        glUniform1i uUseTexture 0
+        uMode <- C.withCAString "mode" (glGetUniformLocation poster.prog)
+        glUniform1i uMode 1
+        uThickness <- C.withCAString "thickness" (glGetUniformLocation poster.prog)
+        glUniform1i uThickness (-1)
         uColor <- C.withCAString "f_color" (glGetUniformLocation poster.prog)
         let Color{..} = color in
           glUniform4f uColor red green blue alpha
@@ -511,25 +534,30 @@ drawQuadTexture poster res texture quad = do
         writeArrayBuffer $
           pixelQuadToNDC res quad ++
           [ 0, 1, 1, 1, 0, 0, 1, 0 ]
-        uUseTexture <- C.withCAString "use_texture" (glGetUniformLocation poster.prog)
-        glUniform1i uUseTexture 1
+        uMode <- C.withCAString "mode" (glGetUniformLocation poster.prog)
+        glUniform1i uMode 0
         withSlot texture2DSlot texture do
           glDrawArrays GL_TRIANGLE_STRIP 0 4
 
-drawQuadFrame :: Poster -> Resolution -> Color -> Quad -> IO ()
-drawQuadFrame poster res color quad = do
+drawQuadFrame :: Poster -> Resolution -> Color -> Int -> Quad -> IO ()
+drawQuadFrame poster res color thickness quad = do
   bindProgram poster.prog do
     withSlot vertexArraySlot poster.vao do
       withSlot arrayBufferSlot poster.vbo do
-        let
-          verts = concatMap scale [quad.topLeft, quad.topRight, quad.bottomRight, quad.bottomLeft]
-          scale (x, y) = [-1 + (2 * fromIntegral x + 1) / fromIntegral res.w, 1 - (2 * fromIntegral y + 1) / fromIntegral res.h]
         writeArrayBuffer $
-          verts ++
+          pixelQuadToNDC res quad ++
           [ 0, 0, 0, 0, 0, 0, 0, 0 ]
-        uUseTexture <- C.withCAString "use_texture" (glGetUniformLocation poster.prog)
-        glUniform1i uUseTexture 0
+        uMode <- C.withCAString "mode" (glGetUniformLocation poster.prog)
+        glUniform1i uMode 1
+        uThickness <- C.withCAString "thickness" (glGetUniformLocation poster.prog)
+        glUniform1i uThickness (fromIntegral thickness)
+        uQuad <- C.withCAString "quad" (glGetUniformLocation poster.prog)
+        let Resolution w h = quadSize quad in
+          glUniform4i uQuad (fromIntegral (fst quad.topLeft)) (fromIntegral (snd quad.topLeft)) (fromIntegral w) (fromIntegral h)
+        uViewport <- C.withCAString "viewport" (glGetUniformLocation poster.prog)
+        getSlot viewportSlot >>= \(ScreenRect x y w h) -> do
+          glUniform4i uViewport (fromIntegral x) (fromIntegral y) (fromIntegral w) (fromIntegral h)
         uColor <- C.withCAString "f_color" (glGetUniformLocation poster.prog)
         let Color{..} = color in
           glUniform4f uColor red green blue alpha
-        glDrawArrays GL_LINE_LOOP 0 4
+        glDrawArrays GL_TRIANGLE_STRIP 0 4

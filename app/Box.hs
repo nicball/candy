@@ -11,14 +11,16 @@ module Box
   , drawableBox
   , textureBox
   , withPadding
+  , frameBox
   ) where
 
 import Control.Monad (foldM, void, when)
 import Control.Exception (assert)
 import Data.List (intersperse)
 
-import GL (drawQuadTexture, posterSingleton, quadFromTopLeftWH, Resolution(..), Texture, quadToViewport, getSlot, withSlot, viewportSlot)
+import GL (drawQuadTexture, posterSingleton, quadFromTopLeftWH, Resolution(..), Texture, quadToViewport, getSlot, withSlot, viewportSlot, drawQuadFrame, posterSingleton)
 import Window (AnyBox(..), Box(..), Draw(..))
+import Config (Color)
 
 drawClipping :: Resolution -> AnyBox -> IO ()
 drawClipping res (AnyBox box) = do
@@ -198,3 +200,19 @@ withPadding top bottom left right box =
       ]
     , hspacer right False
     ]
+
+data FrameBox = FrameBox Int Color AnyBox
+
+instance Box FrameBox where
+  minimumSize (FrameBox t _ b) = Resolution (w + 2 * t) (h + 2 * t)
+    where Resolution w h = minimumSize b
+  expandableX (FrameBox _ _ b) = expandableX b
+  expandableY (FrameBox _ _ b) = expandableY b
+  safeDraw res@(Resolution w h) (FrameBox t c b) = do
+    drawQuadFrame posterSingleton res c t $ quadFromTopLeftWH 0 0 w h
+    let childRes = Resolution (w - 2 * t) (h - 2 * t)
+    vp <- quadToViewport (quadFromTopLeftWH t t childRes.w childRes.h) <$> getSlot viewportSlot
+    withSlot viewportSlot vp (safeDraw childRes b)
+
+frameBox :: Int -> Color -> AnyBox -> AnyBox
+frameBox t c b = AnyBox $ FrameBox t c b

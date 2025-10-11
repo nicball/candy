@@ -8,7 +8,7 @@ import Graphics.UI.GLFW as GLFW
 
 import Config (ConfigT(..), config)
 import Window (Bar(..), EditorWindow(..), WindowManager(..), Draw(..), SendChar(..), SendKey(..), Scroll(..), GetBox(..), pattern GMKCtrl)
-import Box (AnyBox, drawClipping, hbox, hratioBox, hspacer, vbox, vratioBox, vspacer)
+import Box (AnyBox, drawClipping, hbox, hratioBox, hspacer, vbox, vratioBox, vspacer, frameBox)
 
 data DefaultWindowManager = DefaultWindowManager
   { layout :: IORef Tree
@@ -55,7 +55,9 @@ instance Draw DefaultWindowManager where
   draw res dwm = do
     layout <- readIORef dwm.layout
     focus <- readIORef dwm.focus
-    layoutBox <- getLayoutBox layout (Just focus)
+    layoutBox <- case layout of
+      Leaf (WrapEditorWindow win) -> getBox win
+      _ -> getLayoutBox layout (Just focus)
     readIORef dwm.bar >>= \case
       Nothing -> drawClipping res layoutBox
       Just (WrapBar bar) -> do
@@ -64,7 +66,11 @@ instance Draw DefaultWindowManager where
         drawClipping res (vbox [barBox, layoutBox])
 
 getLayoutBox :: Tree -> Maybe Path -> IO AnyBox
-getLayoutBox (Leaf (WrapEditorWindow win)) _ = getBox win -- TODO: draw border
+getLayoutBox (Leaf (WrapEditorWindow win)) focus = do
+  cfg <- readIORef config
+  case focus of
+    Just _ -> frameBox 2 cfg.windowFocusedBorder <$> getBox win
+    Nothing -> frameBox 2 cfg.windowBorder <$> getBox win
 getLayoutBox (Branch Vertical ratio north south) focus = do
   margin <- (.tilingMargin) <$> readIORef config
   northBox <- getLayoutBox north (moveAlong North focus)

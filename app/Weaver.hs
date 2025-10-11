@@ -110,26 +110,26 @@ drawText :: Weaver -> Texture -> ColorSpec -> Text -> IO Resolution
 drawText weaver texture colorspec text = assert (not . Text.null $ text) do
   bindProgram weaver.program do
     withSlot texture2DSlot weaver.atlas.texture do
-      ftFace <- deref =<< getFaceCached weaver.face
-      lineHeight <- getLineHeight ftFace
-      descender <- getDescender ftFace
-      (textWidth, array) <- genVertexArray 0 (lineHeight + descender - 1)
-      glGenerateMipmap GL_TEXTURE_2D
-      let res = Resolution textWidth lineHeight
-      horiRes <- C.withCAString "hori_res" (glGetUniformLocation weaver.program)
-      glUniform1f horiRes (fromIntegral res.w)
-      vertRes <- C.withCAString "vert_res" (glGetUniformLocation weaver.program)
-      glUniform1f vertRes (fromIntegral res.h)
-      renderToTexture res texture do
-        withSlot vertexArraySlot weaver.vao do
-          withSlot arrayBufferSlot weaver.vbo do
-            writeArrayBuffer array
-            withSlot blendSlot False do
-              glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 10))
-      pure res
+      getFaceCached weaver.face >>= flip withRefcount \ftFace -> do
+        lineHeight <- getLineHeight ftFace
+        descender <- getDescender ftFace
+        (textWidth, array) <- genVertexArray 0 (lineHeight + descender - 1)
+        glGenerateMipmap GL_TEXTURE_2D
+        let res = Resolution textWidth lineHeight
+        horiRes <- C.withCAString "hori_res" (glGetUniformLocation weaver.program)
+        glUniform1f horiRes (fromIntegral res.w)
+        vertRes <- C.withCAString "vert_res" (glGetUniformLocation weaver.program)
+        glUniform1f vertRes (fromIntegral res.h)
+        renderToTexture res texture do
+          withSlot vertexArraySlot weaver.vao do
+            withSlot arrayBufferSlot weaver.vbo do
+              writeArrayBuffer array
+              withSlot blendSlot False do
+                glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 10))
+        pure res
   where
     genVertexArray originX originY = do
-      glyphs <- Raqm.getGlyphs =<< deref =<< layoutTextCached weaver.face text
+      glyphs <- layoutTextCached weaver.face text >>= flip withRefcount Raqm.getGlyphs
       renderedGlyphs <- renderGlyphToAtlas weaver (fmap (.index) glyphs)
       (_, maxX, vertices) <- foldM renderGlyph (0, 0, []) (zip glyphs renderedGlyphs)
       pure (maxX, concat . reverse $ vertices)
@@ -196,8 +196,8 @@ layoutTextCached faceID text = lookupCache (faceID, text) new Raqm.destroy raqmC
       rq <- Raqm.create
       Raqm.setText rq text
       Raqm.setLanguage rq "en" 0 (Text.lengthWord8 text)
-      face <- deref =<< getFaceCached faceID
-      Raqm.setFreetypeFace rq face
+      getFaceCached faceID >>= flip withRefcount \face -> do
+        Raqm.setFreetypeFace rq face
       -- Raqm.addFontFeature rq "dlig"
       Raqm.layout rq
       pure rq
