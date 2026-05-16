@@ -3,6 +3,7 @@ module Document
   , DocumentType(..)
   , Coord(..)
   , Iv(..)
+  , Patch(..)
   , fromFile
   , patch
   , extract
@@ -39,8 +40,12 @@ import Nexus
 data Document = Document
   { lines :: IORef (Seq Text)
   , type_ :: DocumentType
-  , onPatch :: Nexus (Coord -> Coord)
+  , onPatch :: Nexus (Coord -> Patch)
   }
+
+data Patch
+  = Translation Coord
+  | Modification Iv Iv
 
 data DocumentType
   = Scratch
@@ -63,6 +68,10 @@ instance Show Coord where
 
 mapIv :: (Coord -> Coord) -> Iv -> Iv
 mapIv f iv = Iv (f iv.begin) (f iv.end)
+
+mapPatch :: (Coord -> Coord) -> Patch -> Patch
+mapPatch f (Translation c) = Translation (f c)
+mapPatch f (Modification d a) = Modification (mapIv f d) (mapIv f a)
 
 fromFile :: FilePath -> IO Document
 fromFile path = do
@@ -88,7 +97,7 @@ patch :: [(Iv, Text)] -> Document -> IO ()
 patch mods doc = do
   lns <- readIORef doc.lines
   let
-    translate = clampCoord newLines . genTranslate id
+    translate = mapPatch (clampCoord newLines) . genTranslate Translation
     newLines = closeLines . combineLines firstHalf $ secondHalf
     (firstHalf, secondHalf, _, genTranslate) = foldl' go (Seq.singleton "", lns, id, id) . sortOn ((.begin) . fst) $ mods
     go (done, rest, offsetIv, gt) (iv, text) = (combineLines done before, after, offsetIv', gt')
@@ -97,7 +106,7 @@ patch mods doc = do
         (before, after, subgt) = patch1 oiv text rest
         offsetIv' = mapIv (`subtractCoord` oiv.end) . offsetIv
         gt' = gt . subgt
-    patch1 :: Iv -> Text -> Seq Text -> (Seq Text, Seq Text, (Coord -> Coord) -> Coord -> Coord)
+    patch1 :: Iv -> Text -> Seq Text -> (Seq Text, Seq Text, (Coord -> Patch) -> Coord -> Patch)
     patch1 iv text ls = (patched, after, trans)
       where
         textLines = toOpenLines text
@@ -106,9 +115,9 @@ patch mods doc = do
         patched = combineLines before textLines
         afterBegin = lengthLines patched
         trans f c
-          | c < iv.begin = c
-          | c < iv.end = afterBegin
-          | iv.end <= c = f (c `subtractCoord` iv.end) `addCoord` afterBegin
+          | c < iv.begin = Translation c
+          | c < iv.end = Modification iv iv { end = afterBegin }
+          | iv.end <= c = mapPatch (`addCoord` afterBegin) . f . (`subtractCoord` iv.end) $ c
           | otherwise = undefined
   writeIORef doc.lines newLines
   notify translate doc.onPatch

@@ -33,7 +33,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NE
 import Data.List (partition, sortOn)
 
-import Document (breakAfterCoord, breakBeforeCoord, charBreaker, countBreaks, moveCoord, wordBreaker, Coord(..), Document, lastCharOffset, Iv(..), countLines, lastCharOffset, charLengthAt)
+import Document (breakAfterCoord, breakBeforeCoord, charBreaker, countBreaks, moveCoord, wordBreaker, Coord(..), Document, lastCharOffset, Iv(..), Patch(..), countLines, lastCharOffset, charLengthAt)
 import Document qualified
 
 data Selection = SelectionWithTarget { anchor :: Coord, mark :: Coord, target :: Maybe Int }
@@ -74,7 +74,7 @@ ivToSel doc iv = do
   end <- if line == numLines - 1 && col == Text.lengthWord8 lineText
     then pure . Coord line . lastCharOffset $ lineText
     else moveCoord doc (-1) iv.end
-  pure $ Selection iv.begin end
+  pure $ Selection iv.begin (max iv.begin end)
 
 selAtLine :: Document -> Selection -> Int -> IO (Maybe (Int, Int))
 selAtLine _ (Selection (Coord aln acol) (Coord mln mcol)) ln | aln == mln =
@@ -189,8 +189,12 @@ breakEndCoord (brk, Coord line col) = Coord line (col + lastCharOffset (ICU.brkB
 
 newtype Selections = Selections { value :: NonEmpty Selection }
 
-translateSelections :: (Coord -> Coord) -> Selections -> Selections
-translateSelections f (Selections s) = mergeSelections . Selections . fmap (\(Selection a m) -> Selection (f a) (f m)) $ s
+translateSelections :: (Coord -> Patch) -> Selections -> Selections
+translateSelections f (Selections s) = mergeSelections . Selections . fmap transSel $ s
+  where
+    transEnd (Translation a) = a
+    transEnd (Modification _ iv) = iv.end
+    transSel (Selection a m) = Selection (transEnd (f a)) (transEnd (f m))
 
 mergeSelections :: Selections -> Selections
 mergeSelections = fromList . merge [] . toList

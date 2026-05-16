@@ -99,7 +99,7 @@ config = unsafePerformIO . newIORef $ Config
     -- , path = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
     -- , index = 17
 
-    , path = "/nix/store/569nxifmwb4r26phghxyn4xszdg7xjxm-source-han-sans-2.004/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
+    , path = "/nix/store/zcz92b9841sy0mjz21pgpl6hi8bd3jlf-source-han-sans-2.005/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
     , index = 27
 
     -- , path = "/nix/store/vl44mgyhq46plr28vfj06zj9lk89jyaw-liberation-fonts-2.1.5/share/fonts/truetype/LiberationSans-Regular.ttf"
