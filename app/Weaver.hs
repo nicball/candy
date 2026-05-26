@@ -2,6 +2,7 @@
            , DerivingStrategies
            , QuasiQuotes
            #-}
+
 module Weaver
   ( Weaver
   , newWeaver
@@ -15,10 +16,11 @@ module Weaver
   , layoutTextCached
   , getFaceCached
   , getWeaverCached
+  , test
   ) where
 
 import Control.Exception (assert, bracket)
-import Control.Monad (forM, foldM)
+import Control.Monad (forM, forM_, foldM)
 import Data.ByteString qualified as BS
 import Data.String.Interpolate (__i)
 import Data.Text.Foreign qualified as Text
@@ -37,6 +39,12 @@ import Atlas
 import Config 
 import Raqm qualified
 import Refcount
+
+import TextLayout 
+
+test :: IO ()
+test = do
+  mapM_ print =<< layoutGlyphs =<< newLineLayout "Hello, World!" LayoutOpt{width=30, ellipsize=False, fontSpec=[]}
 
 data Weaver = Weaver
   { program :: GLuint
@@ -155,13 +163,18 @@ textTexCache :: Cache (FaceID, ColorSpec, Text) (Texture, Resolution)
 textTexCache = unsafePerformIO $ newCache 500
 
 drawTextCached :: FaceID -> ColorSpec -> Text -> IO (Refcount (Texture, Resolution))
-drawTextCached face colorspec text = do
-  lookupCache (face, colorspec, text) new (deleteObject . fst) textTexCache
-  where
-    new = do
-      tex <- genObject
-      res <- getWeaverCached face >>= flip withRefcount \weaver -> drawText weaver tex colorspec text
-      pure (tex, res)
+drawTextCached _ _ text = do
+  layout <- newLineLayout text LayoutOpt{width=30, ellipsize=False, fontSpec=[(0, 200, "Source Code Pro 32")]}
+  tex <- renderLineLayout layout []
+  res <- layoutRes layout
+  newRefcount (tex, res) (deleteObject tex)
+-- drawTextCached face colorspec text = do
+--   lookupCache (face, colorspec, text) new (deleteObject . fst) textTexCache
+--   where
+--     new = do
+--       tex <- genObject
+--       res <- getWeaverCached face >>= flip withRefcount \weaver -> drawText weaver tex colorspec text
+--       pure (tex, res)
 
 {-# NOINLINE globalFtLib #-}
 globalFtLib :: FT_Library

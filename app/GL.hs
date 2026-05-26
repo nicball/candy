@@ -365,15 +365,15 @@ data Resolution = Resolution { w :: Int, h :: Int }
 pixelQuadToNDC :: Resolution -> Quad -> [GLfloat]
 pixelQuadToNDC res (Quad tl tr bl br) =
   concat
-    [ scale tl 0 1
-    , scale tr 1 1
-    , scale bl 0 0
-    , scale br 1 0
+    [ scale tl 0 0
+    , scale tr 1 0
+    , scale bl 0 (-1)
+    , scale br 1 (-1)
     ]
   where
     scale (x, y) dx dy =
-      [ -1 + (fromIntegral x + dx)      * 2 / fromIntegral res.w
-      ,  1 + (-fromIntegral y - 1 + dy) * 2 / fromIntegral res.h
+      [ -1 + ( fromIntegral x + dx) * 2 / fromIntegral res.w
+      ,  1 + (-fromIntegral y + dy) * 2 / fromIntegral res.h
       ]
 
 data Poster = Poster

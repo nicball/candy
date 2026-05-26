@@ -13,8 +13,10 @@ import Window
 import WindowManager
 import EditorWindow
 import Bar
-import Script
 import Document
+
+import Selection
+import Data.List.NonEmpty
 
 main :: IO ()
 main = do
@@ -22,7 +24,7 @@ main = do
     setSlot blendSlot True
     glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
     ew <- new =<< fromFile "./app/Window.hs" :: IO DefaultEditorWindow
-    withDefaultWindowManager ew \wm -> do
+    withDefaultWindowManager DummyWindow \wm -> do
       withDefaultBar \bar -> do
         setBar bar wm
 
@@ -64,3 +66,26 @@ main = do
       ScreenRect 0 0 w h <- getSlot viewportSlot
       draw (Resolution w h) wm
       GLFW.swapBuffers win
+
+data DummyWindow = DummyWindow
+instance EditorWindow DummyWindow where
+  new _ = pure DummyWindow
+  getDocument _ = fromFile "./test.txt"
+  fork _ = pure DummyWindow
+  close _ = pure ()
+  getStatus _ = pure Status{selections=Selections (Selection (Coord 0 0) (Coord 0 0) :| []), mode=NormalMode, name="Hello, World!"}
+instance Scroll DummyWindow where
+  scroll _ _ _ = pure ()
+instance SendKey DummyWindow where
+  sendKey _ _ _ = pure ()
+instance SendChar DummyWindow where
+  sendChar _ _ = pure ()
+instance GetBox DummyWindow where
+  getBox _ = pure (AnyBox DummyBox)
+
+data DummyBox = DummyBox
+instance Box DummyBox where
+  minimumSize _ = Resolution 0 0
+  expandableX _ = True
+  expandableY _ = True
+  safeDraw _ _ = pure ()

@@ -70,8 +70,8 @@ executable candy
     GL,
     Config,
     Weaver,
-    Raqm,
     Window,
+    Raqm,
     Document,
     Selection,
     Nexus,
@@ -80,7 +80,11 @@ executable candy
     Bar,
     Refcount,
     Box,
-    Script
+    Script,
+    PangoFix,
+    PangoFix.Foreign,
+    TextLayout,
+    TextLayout.Foreign
 
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:
@@ -97,10 +101,17 @@ executable candy
     lrucache,
     text-icu,
     string-interpolate,
-    hslua
+    hslua,
+    gi-pango,
+    gi-pangocairo,
+    haskell-gi-base,
+    inline-c
 
   pkgconfig-depends:
-    raqm
+    pango,
+    pangoft2,
+    harfbuzz,
+    harfbuzz-raster
 
   -- Directories containing source files.
   hs-source-dirs:   app
