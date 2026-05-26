@@ -8,6 +8,7 @@ module TextLayout
   , renderLineLayout
   , layoutRes
   , indexToQuad
+  , positionToIndex
   ) where
 
 import Config
@@ -47,7 +48,7 @@ defaultLayoutContext = unsafePerformIO $ GI.newObject Pango.Context =<< [C.block
 
 type LineLayout = Pango.Layout
 data LayoutOpt = LayoutOpt
-  { width :: Int
+  { width :: Maybe Int
   , ellipsize :: Bool
   , fontSpec :: FontSpec
   }
@@ -61,7 +62,6 @@ data GlyphInfo = GlyphInfo
   , advance :: Int
   }
   deriving Show
-type FontDesc = Text
 type Font = Pango.Font
 
 newLineLayout :: Text -> LayoutOpt -> IO LineLayout
@@ -70,7 +70,7 @@ newLineLayout text opts = do
   if opts.ellipsize
     then Pango.layoutSetEllipsize layout Pango.EllipsizeModeEnd
     else Pango.layoutSetEllipsize layout Pango.EllipsizeModeNone
-  Pango.layoutSetWidth layout (fromIntegral opts.width * 1024)
+  Pango.layoutSetWidth layout (maybe (-1) ((* 1024) . fromIntegral) opts.width)
   Pango.layoutSetText layout text (-1)
   attrs <- Pango.attrListNew
   forM_ opts.fontSpec \(start, end, descStr) -> do
@@ -137,37 +137,34 @@ layoutGlyphs layout = do
     scale x = fromIntegral (div x 1024)
 
 type ColorSpec = [(Int, Int, Color)]
+
 renderLineLayout :: LineLayout -> ColorSpec -> IO Texture
 renderLineLayout layout _ = do
   texture <- genObject
   Resolution width height <- layoutRes layout
-  print (Resolution width height)
   glyphs <- layoutGlyphs layout
-  let bufSize = width * height
+  let bufSize = width * height * 4
   buf <- C.mallocForeignPtrBytes bufSize
   C.withForeignPtr buf \pBuf -> do
     C.fillBytes pBuf 0 bufSize
     renderer <- newGlyphRenderer
     forM_ glyphs \gi -> do
       image <- renderGlyph renderer gi.font gi.gid
-      print gi
-      print image
       let left = gi.x + image.xOrigin
       let bottom = height - (gi.y - image.yOrigin)
-      putStrLn "glyph:"
-      print left
-      print bottom
       forM_ [0 .. image.height - 1] \row -> do
-        let dst = (bottom + row) * width + left
+        let dst = ((bottom + row) * width + left) * 4
         let src = row * image.width
-        putStrLn "memcpy:"
-        print (dst)
-        print (src)
         C.withForeignPtr image.pixels \pixels -> do
-          C.copyBytes (pBuf `C.plusPtr` dst) (pixels `C.plusPtr` src) image.width
+          forM_ [0 .. image.width - 1] \col -> do
+            C.poke (pBuf `C.plusPtr` (dst + col * 4 + 0)) (255 :: C.CChar)
+            C.poke (pBuf `C.plusPtr` (dst + col * 4 + 1)) (255 :: C.CChar)
+            C.poke (pBuf `C.plusPtr` (dst + col * 4 + 2)) (255 :: C.CChar)
+            grey <- C.peek (pixels `C.plusPtr` (src + col))
+            C.poke (pBuf `C.plusPtr` (dst + col * 4 + 3)) (grey :: C.CChar)
     withSlot texture2DSlot texture do
       glPixelStorei GL_UNPACK_ALIGNMENT 1
-      glTexImage2D GL_TEXTURE_2D 0 GL_RED (fromIntegral width) (fromIntegral height) 0 GL_RED GL_UNSIGNED_BYTE pBuf
+      glTexImage2D GL_TEXTURE_2D 0 GL_RGBA (fromIntegral width) (fromIntegral height) 0 GL_RGBA GL_UNSIGNED_BYTE pBuf
       glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST
       glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
       glGenerateMipmap GL_TEXTURE_2D
@@ -232,8 +229,6 @@ renderGlyph gr font gid =
     *p_x_origin = raster_extents.x_origin;
     *p_y_origin = raster_extents.y_origin;
     size_t count = raster_extents.width * raster_extents.height;
-    printf("gid=%u pt=%g xs=%d ys=%d\n", gid, font_pt, x_scale, y_scale);
-    printf("w=%d s=%d h=%d count=%lu\n", raster_extents.width, raster_extents.stride, raster_extents.height, count);
     char* buf = malloc(count);
     const char* data = hb_raster_image_get_buffer(image);
     for (int i = 0; i < raster_extents.height; ++i)

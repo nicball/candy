@@ -24,7 +24,7 @@ main = do
     setSlot blendSlot True
     glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
     ew <- new =<< fromFile "./app/Window.hs" :: IO DefaultEditorWindow
-    withDefaultWindowManager DummyWindow \wm -> do
+    withDefaultWindowManager ew \wm -> do
       withDefaultBar \bar -> do
         setBar bar wm
 

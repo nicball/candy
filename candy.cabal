@@ -80,7 +80,7 @@ executable candy
     Bar,
     Refcount,
     Box,
-    Script,
+    -- Script,
     PangoFix,
     PangoFix.Foreign,
     TextLayout,

@@ -50,6 +50,8 @@ module GL
   , quadFromBottomLeftWH
   , quadFromYXRange
   , quadSize
+  , quadPlus
+  , quadOverlap
   , quadToViewport
   , Poster
   , posterSingleton
@@ -363,12 +365,12 @@ data Resolution = Resolution { w :: Int, h :: Int }
   deriving Show
 
 pixelQuadToNDC :: Resolution -> Quad -> [GLfloat]
-pixelQuadToNDC res (Quad tl tr bl br) =
+pixelQuadToNDC res quad =
   concat
-    [ scale tl 0 0
-    , scale tr 1 0
-    , scale bl 0 (-1)
-    , scale br 1 (-1)
+    [ scale (quad.left , quad.top)    0 0
+    , scale (quad.right, quad.top)    1 0
+    , scale (quad.left , quad.bottom) 0 (-1)
+    , scale (quad.right, quad.bottom) 1 (-1)
     ]
   where
     scale (x, y) dx dy =
@@ -457,57 +459,57 @@ withPoster ::(Poster -> IO a) -> IO a
 withPoster = bracket newPoster deletePoster
 
 data Quad = Quad
-  { topLeft :: (Int, Int)
-  , topRight :: (Int, Int)
-  , bottomLeft :: (Int, Int)
-  , bottomRight :: (Int, Int)
+  { left :: Int
+  , right :: Int
+  , top :: Int
+  , bottom :: Int
   }
+  deriving Show
 
 quadSize :: Quad -> Resolution
-quadSize quad =
-  let
-    (x, y) = quad.topLeft
-    (x', y') = quad.bottomRight
-  in
-    Resolution (x' - x + 1) (y' - y + 1)
+quadSize quad = Resolution (quad.right - quad.left + 1) (quad.bottom - quad.top + 1)
 
 quadToViewport :: Quad -> ScreenRect -> ScreenRect
 quadToViewport quad (ScreenRect x y _ h) =
   ScreenRect
-    (x + fst quad.bottomLeft)
-    (y + h - 1 - snd quad.bottomLeft)
+    (x + quad.left)
+    (y + h - 1 - quad.bottom)
     res.w
     res.h
   where res = quadSize quad
 
 quadFromYXRange :: Int -> Int -> Int -> Int -> Quad
 quadFromYXRange yBegin yEnd xBegin xEnd = Quad
-  (xBegin, yBegin)
-  (xEnd, yBegin)
-  (xBegin, yEnd)
-  (xEnd, yEnd)
+  { left = xBegin
+  , right = xEnd
+  , top = yBegin
+  , bottom = yEnd
+  }
 
 quadFromTopLeftWH :: Int -> Int -> Int -> Int -> Quad
-quadFromTopLeftWH x y w h =
-  let
-    x' = x + w - 1
-    y' = y + h - 1
-  in Quad
-    (x, y)
-    (x', y)
-    (x, y')
-    (x', y')
+quadFromTopLeftWH x y w h = Quad
+  { left = x
+  , right = x + w - 1
+  , top = y
+  , bottom = y + h - 1
+  }
 
 quadFromBottomLeftWH :: Int -> Int -> Int -> Int -> Quad
-quadFromBottomLeftWH x y w h =
-  let
-    x' = x + w - 1
-    y' = y - h + 1
-  in Quad
-    (x, y')
-    (x', y')
-    (x, y)
-    (x', y)
+quadFromBottomLeftWH x y w h = quadFromTopLeftWH x (y - h + 1) w h
+
+quadPlus :: Quad -> Int -> Int -> Quad
+quadPlus Quad{..} dx dy = Quad
+ { left = left + dx
+ , right = right + dx
+ , top = top + dy
+ , bottom = bottom + dy
+ }
+
+quadOverlap :: Quad -> Quad -> Bool
+quadOverlap a b = a.left < b.right
+               && a.right > b.left
+               && a.bottom > b.top
+               && a.top < b.bottom
 
 drawQuadColor :: Poster -> Resolution -> Color -> Quad -> IO ()
 drawQuadColor poster res color quad = do
@@ -553,7 +555,7 @@ drawQuadFrame poster res color thickness quad = do
         glUniform1i uThickness (fromIntegral thickness)
         uQuad <- C.withCAString "quad" (glGetUniformLocation poster.prog)
         let Resolution w h = quadSize quad in
-          glUniform4i uQuad (fromIntegral (fst quad.topLeft)) (fromIntegral (snd quad.topLeft)) (fromIntegral w) (fromIntegral h)
+          glUniform4i uQuad (fromIntegral quad.left) (fromIntegral quad.top) (fromIntegral w) (fromIntegral h)
         uViewport <- C.withCAString "viewport" (glGetUniformLocation poster.prog)
         getSlot viewportSlot >>= \(ScreenRect x y w h) -> do
           glUniform4i uViewport (fromIntegral x) (fromIntegral y) (fromIntegral w) (fromIntegral h)

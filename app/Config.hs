@@ -3,8 +3,7 @@
 module Config
   ( ConfigT(..)
   , Config
-  , FaceIDT(..)
-  , FaceID
+  , FontDesc
   , Color
   , ColorT(..)
   , colorToRGBA
@@ -18,6 +17,7 @@ module Config
 import Data.IORef (IORef, newIORef)
 import System.IO.Unsafe (unsafePerformIO)
 import GHC.Generics (Generic)
+import Data.Text (Text)
 
 data ColorT f = Color
   { red :: f
@@ -33,7 +33,7 @@ colorToRGBA :: Color -> [Float]
 colorToRGBA Color{..} = [ red, green, blue, alpha ]
 
 data ConfigT f i s = Config
-  { face :: FaceIDT i s
+  { font :: FontDesc
   , background :: ColorT f
   , foreground :: ColorT f
   , primarySelectionForeground :: ColorT f
@@ -60,14 +60,7 @@ data ConfigT f i s = Config
 
 type Config = ConfigT Float Int String
 
-data FaceIDT i s = FaceID
-  { path :: s
-  , index :: i
-  , sizePx :: i
-  }
-  deriving (Eq, Ord, Generic)
-
-type FaceID = FaceIDT Int String
+type FontDesc = Text
 
 nord0, nord1, nord2, nord3 :: Color
 nord4, nord5, nord6, nord7 :: Color
@@ -94,20 +87,7 @@ nord15 = Color 0.705882 0.556863 0.678431 1
 {-# NOINLINE config #-}
 config :: IORef Config
 config = unsafePerformIO . newIORef $ Config
-  { face = FaceID
-    { sizePx = 24
-    -- , path = "/nix/store/4c819hv4pvz4l37yxf391mwwvwdhvia9-source-han-serif-2.003/share/fonts/opentype/source-han-serif/SourceHanSerif.ttc"
-    -- , index = 17
-
-    , path = "/nix/store/zcz92b9841sy0mjz21pgpl6hi8bd3jlf-source-han-sans-2.005/share/fonts/opentype/source-han-sans/SourceHanSans.ttc"
-    , index = 27
-
-    -- , path = "/nix/store/vl44mgyhq46plr28vfj06zj9lk89jyaw-liberation-fonts-2.1.5/share/fonts/truetype/LiberationSans-Regular.ttf"
-    -- , path = "/nix/store/hibcvpqv3w7s7fpl3wgd8c33hs0znywq-Iosevka-33.2.3/share/fonts/truetype/Iosevka-ExtendedMedium.ttf"
-    -- , path = "/nix/store/46g6p6698lc50ypik6mgg0wf3q23gzqz-dejavu-fonts-2.37/share/fonts/truetype/DejaVuSansMono.ttf"
-    -- , index = 0
-    }
-
+  { font = "Source Han Sans 24"
   , foreground = nord6
   , background = nord0 -- { alpha = 0.8 }
   , primarySelectionForeground = nord0

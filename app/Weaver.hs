@@ -4,28 +4,18 @@
            #-}
 
 module Weaver
-  ( Weaver
-  , newWeaver
-  , deleteWeaver
-  , withWeaver
-  , getLineHeight
-  , getAscender
-  , getDescender
-  , drawText
-  , drawTextCached
+  ( drawTextCached
   , layoutTextCached
-  , getFaceCached
-  , getWeaverCached
-  , test
   ) where
 
+import Data.Text.Foreign qualified as Text
+import Data.Text (Text)
+{-
 import Control.Exception (assert, bracket)
 import Control.Monad (forM, forM_, foldM)
 import Data.ByteString qualified as BS
 import Data.String.Interpolate (__i)
-import Data.Text.Foreign qualified as Text
 import Data.Text qualified as Text
-import Data.Text (Text)
 import Foreign.C.String qualified as C
 import Foreign.Marshal.Array qualified as C
 import Foreign.Ptr qualified as C
@@ -33,29 +23,26 @@ import Foreign.Storable qualified as C
 import FreeType
 import Graphics.GL
 import System.IO.Unsafe (unsafePerformIO)
+import Atlas
+-}
 
 import GL 
-import Atlas 
 import Config 
-import Raqm qualified
 import Refcount
 
 import TextLayout 
 
-test :: IO ()
-test = do
-  mapM_ print =<< layoutGlyphs =<< newLineLayout "Hello, World!" LayoutOpt{width=30, ellipsize=False, fontSpec=[]}
-
+{-
 data Weaver = Weaver
   { program :: GLuint
   , vbo :: GL.Buffer
   , vao :: GL.VertexArray
   , atlas :: Atlas RenderedGlyph
-  , face :: FaceID
+  , face :: FontDesc
   , ftFace :: Refcount FT_Face
   }
 
-newWeaver :: FaceID -> IO Weaver
+newWeaver :: FontDesc -> IO Weaver
 newWeaver face = do
   program <- newProgram (Just vertexShaderSource) (Just geometryShaderSource) (Just fragmentShaderSource)
   ftFace <- getFaceCached face
@@ -97,7 +84,7 @@ deleteWeaver weaver = do
   deleteAtlas weaver.atlas
   decRef weaver.ftFace
 
-withWeaver :: FaceID -> (Weaver -> IO a) -> IO a
+withWeaver :: FontDesc -> (Weaver -> IO a) -> IO a
 withWeaver face = bracket (newWeaver face) deleteWeaver
 
 getLineHeight :: FT_Face -> IO Int
@@ -111,9 +98,11 @@ getAscender ftFace = do
 getDescender :: FT_Face -> IO Int
 getDescender ftFace = do
   fromIntegral . (`div` 64) . smDescender . srMetrics <$> (C.peek . frSize =<< C.peek ftFace)
+-}
 
 type ColorSpec = [(Int, Int, Color)]
 
+{-
 drawText :: Weaver -> Texture -> ColorSpec -> Text -> IO Resolution
 drawText weaver texture colorspec text = assert (not . Text.null $ text) do
   bindProgram weaver.program do
@@ -159,12 +148,13 @@ drawText weaver texture colorspec text = assert (not . Text.null $ text) do
       | otherwise = findColor idx cs
 
 {-# NOINLINE textTexCache #-}
-textTexCache :: Cache (FaceID, ColorSpec, Text) (Texture, Resolution)
+textTexCache :: Cache (FontDesc, ColorSpec, Text) (Texture, Resolution)
 textTexCache = unsafePerformIO $ newCache 500
+-}
 
-drawTextCached :: FaceID -> ColorSpec -> Text -> IO (Refcount (Texture, Resolution))
-drawTextCached _ _ text = do
-  layout <- newLineLayout text LayoutOpt{width=30, ellipsize=False, fontSpec=[(0, 200, "Source Code Pro 32")]}
+drawTextCached :: FontDesc -> ColorSpec -> Text -> IO (Refcount (Texture, Resolution))
+drawTextCached font _ text = do
+  layout <- newLineLayout text LayoutOpt{width=Nothing, ellipsize=False, fontSpec=[(0, Text.lengthWord8 text, font)]}
   tex <- renderLineLayout layout []
   res <- layoutRes layout
   newRefcount (tex, res) (deleteObject tex)
@@ -176,15 +166,16 @@ drawTextCached _ _ text = do
 --       res <- getWeaverCached face >>= flip withRefcount \weaver -> drawText weaver tex colorspec text
 --       pure (tex, res)
 
+{-
 {-# NOINLINE globalFtLib #-}
 globalFtLib :: FT_Library
 globalFtLib = unsafePerformIO ft_Init_FreeType
 
 {-# NOINLINE faceCache #-}
-faceCache :: Cache FaceID FT_Face
+faceCache :: Cache FontDesc FT_Face
 faceCache = unsafePerformIO $ newCache 5
 
-getFaceCached :: FaceID -> IO (Refcount FT_Face)
+getFaceCached :: FontDesc -> IO (Refcount FT_Face)
 getFaceCached faceID = lookupCache faceID new (ft_Done_Face) faceCache
   where
     new = do
@@ -192,29 +183,35 @@ getFaceCached faceID = lookupCache faceID new (ft_Done_Face) faceCache
       ft_Set_Pixel_Sizes face 0 (fromIntegral faceID.sizePx)
       pure face
 
-weaverCache :: Cache FaceID Weaver
+weaverCache :: Cache FontDesc Weaver
 weaverCache = unsafePerformIO $ newCache 5
 
-getWeaverCached :: FaceID -> IO (Refcount Weaver)
+getWeaverCached :: FontDesc -> IO (Refcount Weaver)
 getWeaverCached faceID = lookupCache faceID (newWeaver faceID) deleteWeaver weaverCache
 
 {-# NOINLINE raqmCache #-}
-raqmCache :: Cache (FaceID, Text) Raqm.Raqm
+raqmCache :: Cache (FontDesc, Text) Raqm.Raqm
 raqmCache = unsafePerformIO $ newCache 500
+-}
 
-layoutTextCached :: FaceID -> Text -> IO (Refcount Raqm.Raqm)
-layoutTextCached faceID text = lookupCache (faceID, text) new Raqm.destroy raqmCache
-  where
-    new = do
-      rq <- Raqm.create
-      Raqm.setText rq text
-      Raqm.setLanguage rq "en" 0 (Text.lengthWord8 text)
-      getFaceCached faceID >>= flip withRefcount \face -> do
-        Raqm.setFreetypeFace rq face
-      -- Raqm.addFontFeature rq "dlig"
-      Raqm.layout rq
-      pure rq
+layoutTextCached :: FontDesc -> Text -> IO LineLayout
+layoutTextCached font text = do
+  newLineLayout text LayoutOpt{width=Nothing, ellipsize=False, fontSpec=[(0, Text.lengthWord8 text, font)]}
 
+-- layoutTextCached :: FontDesc -> Text -> IO (Refcount Raqm.Raqm)
+-- layoutTextCached faceID text = lookupCache (faceID, text) new Raqm.destroy raqmCache
+--   where
+--     new = do
+--       rq <- Raqm.create
+--       Raqm.setText rq text
+--       Raqm.setLanguage rq "en" 0 (Text.lengthWord8 text)
+--       getFaceCached faceID >>= flip withRefcount \face -> do
+--         Raqm.setFreetypeFace rq face
+--       -- Raqm.addFontFeature rq "dlig"
+--       Raqm.layout rq
+--       pure rq
+
+{-
 globalBboxSize :: Int -> FT_Face -> IO (Int, Int)
 globalBboxSize fontSizePx facePtr = do
   face <- C.peek facePtr
@@ -368,3 +365,4 @@ renderGlyphToAtlas weaver glyphIds =
     withReversed len ncol necol arr action = flip C.withArray (action . C.castPtr) . concat . groupNRev ncol necol [] =<< C.peekArray len arr
     groupNRev _ _ acc [] = acc
     groupNRev ncol necol acc xs = groupNRev ncol necol (take necol xs : acc) (drop ncol xs)
+-}
