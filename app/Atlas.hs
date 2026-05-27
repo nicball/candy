@@ -1,41 +1,52 @@
 module Atlas
- ( Atlas
-   ( width
-   , height
-   , texture
-   )
+ ( Atlas(width, height)
+ , AtlasItem(..)
  , newAtlas
  , deleteAtlas
+ , queryGlyph
+ , addGlyph
  ) where
 
 import Control.Exception (bracket)
 import Foreign qualified as C
 import Graphics.GL
-import Data.IntMap qualified as Map
+import Data.Map.Strict qualified as Map
 import Data.Atlas qualified as Skyline
 import Control.Monad.Primitive (PrimState)
 import Data.IORef
+import Data.List.NonEmpty qualified as NonEmpty
+import Control.Monad ((<=<))
+import Data.Monoid (First(..))
 
 import GL (Texture, GLObject(..), texture2DSlot, withSlot)
 
-data Atlas a = Atlas
-  { glyphIdToPos :: IORef (Map.IntMap (AtlasItem a))
-  , texture :: Texture
+data Atlas k a = Atlas
+  { pages :: IORef (NonEmpty.NonEmpty (AtlasPage k a))
   , width :: Int
   , height :: Int
+  }
+
+data AtlasPage k a = AtlasPage
+  { glyphIdToPos :: IORef (Map.Map k (AtlasItem a))
+  , texture :: Texture
   , alloc :: Skyline.Atlas (PrimState IO)
   }
 
 data AtlasItem a = AtlasItem
   { x :: Int
   , y :: Int
-  , width :: Int
-  , height :: Int
+  , texture :: Texture
   , userdata :: a
   }
 
-newAtlas :: Int -> Int -> IO (Atlas a)
+newAtlas :: Int -> Int -> IO (Atlas k a)
 newAtlas width height = do
+  page <- newAtlasPage width height
+  pages <- newIORef (NonEmpty.singleton page)
+  pure Atlas{..}
+
+newAtlasPage :: Int -> Int -> IO (AtlasPage k a)
+newAtlasPage width height = do
   texture <- genObject
   withSlot texture2DSlot texture do
     glPixelStorei GL_UNPACK_ALIGNMENT 1
@@ -45,47 +56,26 @@ newAtlas width height = do
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
   glyphIdToPos <- newIORef Map.empty
   alloc <- Skyline.create width height
-  pure Atlas{..}
+  pure AtlasPage{..}
 
-deleteAtlas :: Atlas a -> IO ()
-deleteAtlas Atlas{texture} = deleteObject texture
+deleteAtlas :: Atlas k a -> IO ()
+deleteAtlas = mapM_ (deleteObject . (.texture)) <=< readIORef . (.pages)
 
-queryGlyph :: Atlas a -> Int -> IO (Maybe (AtlasItem a))
-queryGlyph atlas gid = do
-  m <- readIORef atlas.glyphIdToPos
-  pure $ Map.lookup gid m
+queryGlyph :: Ord k => Atlas k a -> k -> IO (Maybe (AtlasItem a))
+queryGlyph atlas key = getFirst <$> (foldMap (fmap (First . Map.lookup key) . readIORef . (.glyphIdToPos)) =<< readIORef atlas.pages)
 
-addGlyph :: Atlas a -> Int -> Int -> Int -> C.Ptr () -> a -> IO Bool
+addGlyph :: Ord k => Atlas k a -> k -> Int -> Int -> C.Ptr () -> a -> IO (AtlasItem a)
 addGlyph atlas gid width height pixels userdata = do
-  Skyline.pack1 atlas.alloc (Skyline.Pt width height) >>= \case
-    Nothing -> pure False
+  page@AtlasPage{texture} <- NonEmpty.head <$> readIORef atlas.pages
+  Skyline.pack1 page.alloc (Skyline.Pt width height) >>= \case
+    Nothing -> do
+      newPage <- newAtlasPage width height
+      modifyIORef' atlas.pages (NonEmpty.cons newPage)
+      addGlyph atlas gid width height pixels userdata
     Just (Skyline.Pt x y) -> do
-      modifyIORef' atlas.glyphIdToPos (Map.insert gid AtlasItem{..})
-      withSlot texture2DSlot atlas.texture do
+      let item = AtlasItem{..}
+      modifyIORef' page.glyphIdToPos (Map.insert gid item)
+      withSlot texture2DSlot texture do
         glPixelStorei GL_UNPACK_ALIGNMENT 1
         glTexSubImage2D GL_TEXTURE_2D 0 (fromIntegral x) (fromIntegral y) (fromIntegral width) (fromIntegral height) GL_RED GL_UNSIGNED_BYTE pixels
-      pure True
-
-{-
-addGlyph :: Int -> IO (Int, Int, (C.Ptr () -> IO ()) -> IO (), Int -> Int -> a) -> (a -> (Int, Int)) -> Atlas a -> IO (a, Maybe Int)
-addGlyph glyphId render cellFromUserdata atlas = do
-  found <- LRU.lookup glyphId atlas.glyphIdToCell
-  case found of
-    Just userdata -> pure (userdata, Nothing)
-    Nothing -> do
-      (w, h, withImage, userdataFromCell) <- render
-      ((x, y), kicked) <- modifyMVar atlas.freeCells \case
-        cell : fc -> pure (fc, (cell, Nothing))
-        [] -> do
-          Just (kicked, userdata) <- LRU.pop atlas.glyphIdToCell
-          pure ([], (cellFromUserdata userdata, Just kicked))
-      let userdata = userdataFromCell x y
-      LRU.insert glyphId userdata atlas.glyphIdToCell
-      let
-      withSlot texture2DSlot atlas.texture do
-        glPixelStorei GL_UNPACK_ALIGNMENT 1
-        bracket (C.callocBytes (atlas.cellWidth * atlas.cellHeight)) C.free $
-          glTexSubImage2D GL_TEXTURE_2D 0 (fromIntegral x) (fromIntegral y) (fromIntegral atlas.cellWidth) (fromIntegral atlas.cellHeight) GL_RED GL_UNSIGNED_BYTE
-        withImage (glTexSubImage2D GL_TEXTURE_2D 0 (fromIntegral x) (fromIntegral y) (fromIntegral w) (fromIntegral h) GL_RED GL_UNSIGNED_BYTE)
-      pure (userdata, kicked)
--}
+      pure item

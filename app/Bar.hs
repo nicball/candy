@@ -10,7 +10,7 @@ import Data.Text qualified as Text
 
 import Config (ConfigT(..), config)
 import GL (Resolution(..), Texture, clearViewport)
-import Weaver (drawTextCached)
+import Weaver
 import Window (Bar(..), Draw(..), Status(..), GetBox(..), minimumSize)
 import Refcount (deref, Refcount, incRef, decRef)
 import Box (AnyBox, drawClipping, drawableBox, textureBox, withPadding)
@@ -33,7 +33,7 @@ newBarBox :: Status -> IO BarBox
 newBarBox status = do
   cfg <- readIORef config
   let text = (status.name <>) . Text.pack $ " " <> show status.mode <> " " <> show status.selections
-  textTexture <- drawTextCached cfg.font [(0, Text.lengthWord8 text, cfg.barForeground)] text
+  textTexture <- drawTextCachedDefaultFont cfg.font [(0, Text.lengthWord8 text, cfg.barForeground)] text
   incRef textTexture
   (textTex, textRes) <- deref textTexture
   let box = withPadding 5 5 5 5 $ textureBox textRes textTex

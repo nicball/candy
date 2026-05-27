@@ -215,6 +215,7 @@ withSlot s a action = do
   action `finally` setSlot s old
 
 newtype Texture = Texture { id :: GLuint }
+  deriving (Eq, Ord)
 
 instance GLObject Texture where
   genObject = Texture <$> withPeek (glGenTextures 1)

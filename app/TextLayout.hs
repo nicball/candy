@@ -1,59 +1,52 @@
-{-# LANGUAGE TemplateHaskell, QuasiQuotes, ForeignFunctionInterface #-}
+{-# LANGUAGE TemplateHaskell, QuasiQuotes #-}
 
 module TextLayout
   ( newLineLayout
   , LayoutOpt(..)
   , LineLayout
   , layoutGlyphs
-  , renderLineLayout
   , layoutRes
   , indexToQuad
   , positionToIndex
+  , Font
+  , GlyphInfo(..)
+  , describeFont
+  , defaultLayoutOpt
   ) where
 
-import Config
-import Control.Monad (forM_, when)
+import Config (FontDesc)
+import Control.Monad (forM_, when, (<=<))
 import Data.Function (fix)
 import Data.GI.Base qualified as GI
 import Data.IORef
 import Data.Maybe (fromJust)
 import Data.Text qualified as Text
 import Data.Text (Text)
-import Foreign qualified as C
 import GI.Pango qualified as Pango
 import GL
-import Graphics.GL
 import Language.C.Inline qualified as C
-import PangoFix.Foreign
+import PangoFix.Foreign (pangoCtx)
 import PangoFix qualified as Pango
-import TextLayout.Foreign
 import System.IO.Unsafe (unsafePerformIO)
-import Refcount
 
-C.context (C.baseCtx <> pangoCtx <> textLayoutCtx)
-C.include "hb.h"
-C.include "hb-raster.h"
+C.context (C.baseCtx <> pangoCtx)
 C.include "<pango/pango.h>"
 C.include "<pango/pangoft2.h>"
-C.include "<string.h>"
-C.include "<stdlib.h>"
 
 type LayoutContext = Pango.Context
 
-{-# NOINLINE defaultLayoutContext #-}
-defaultLayoutContext :: LayoutContext
-defaultLayoutContext = unsafePerformIO $ GI.newObject Pango.Context =<< [C.block| PangoContext* {
-    PangoFontMap* font_map = pango_ft2_font_map_new();
-    return pango_font_map_create_context(font_map);
-  } |]
-
 type LineLayout = Pango.Layout
+
 data LayoutOpt = LayoutOpt
   { width :: Maybe Int
   , ellipsize :: Bool
   , fontSpec :: FontSpec
+  , defaultFont :: Maybe FontDesc
   }
+  deriving (Eq, Ord)
+
 type FontSpec = [(Int, Int, FontDesc)]
+
 data GlyphInfo = GlyphInfo
   { gid :: Int
   , font :: Font
@@ -63,7 +56,23 @@ data GlyphInfo = GlyphInfo
   , advance :: Int
   }
   deriving Show
+
 type Font = Pango.Font
+
+{-# NOINLINE defaultLayoutContext #-}
+defaultLayoutContext :: LayoutContext
+defaultLayoutContext = unsafePerformIO $ GI.newObject Pango.Context =<< [C.block| PangoContext* {
+    PangoFontMap* font_map = pango_ft2_font_map_new();
+    return pango_font_map_create_context(font_map);
+  } |]
+
+defaultLayoutOpt :: LayoutOpt
+defaultLayoutOpt = LayoutOpt
+  { width = Nothing
+  , ellipsize = False
+  , fontSpec = []
+  , defaultFont = Nothing
+  }
 
 newLineLayout :: Text -> LayoutOpt -> IO LineLayout
 newLineLayout text opts = do
@@ -71,6 +80,7 @@ newLineLayout text opts = do
   if opts.ellipsize
     then Pango.layoutSetEllipsize layout Pango.EllipsizeModeEnd
     else Pango.layoutSetEllipsize layout Pango.EllipsizeModeNone
+  maybe (pure ()) (Pango.layoutSetFontDescription layout . Just <=< Pango.fontDescriptionFromString) opts.defaultFont
   Pango.layoutSetWidth layout (maybe (-1) ((* 1024) . fromIntegral) opts.width)
   Pango.layoutSetText layout text (-1)
   attrs <- Pango.attrListNew
@@ -140,6 +150,7 @@ layoutGlyphs layout = do
   where
     scale x = fromIntegral (div x 1024)
 
+{-
 type ColorSpec = [(Int, Int, Color)]
 
 renderLineLayout :: LineLayout -> ColorSpec -> IO Texture
@@ -180,94 +191,13 @@ renderLineLayout layout colorSpec = do
       | otherwise = findColor idx cs
     cvt :: Float -> C.CChar
     cvt f = truncate $ f * 255
+-}
 
 loadFont :: FontDesc -> IO (Maybe Font)
 loadFont desc = Pango.contextLoadFont defaultLayoutContext =<< Pango.fontDescriptionFromString desc
 
 describeFont :: Font -> IO FontDesc
 describeFont font = Pango.fontDescriptionToString =<< Pango.fontDescribeWithAbsoluteSize font
-
-data GlyphImage = GlyphImage
-  { width :: Int
-  , height :: Int
-  , pixels :: C.ForeignPtr ()
-  , xOrigin :: Int
-  , yOrigin :: Int
-  }
-  deriving Show
-
-newGlyphRenderer :: IO GlyphRenderer
-newGlyphRenderer = GlyphRenderer <$> (C.newForeignPtr p_hb_raster_draw_destroy  =<< [C.exp| hb_raster_draw_t* { hb_raster_draw_create_or_fail() } |])
-
-foreign import ccall "hb-raster.h &hb_raster_draw_destroy"
-  p_hb_raster_draw_destroy :: C.FunPtr (C.Ptr GlyphRenderer -> IO ())
-
-{-# NOINLINE glyphCache #-}
-glyphCache :: Cache (FontDesc, Int) GlyphImage
-glyphCache = unsafePerformIO $ newCache 500
-
-renderGlyphCached :: Font -> Int -> IO GlyphImage
-renderGlyphCached font gid = do
-  fontDesc <- describeFont font
-  let new = do
-        rdr <- newGlyphRenderer
-        renderGlyph rdr font gid
-  deref =<< lookupCache (fontDesc, gid) new (const (pure ())) glyphCache
-
-renderGlyph :: GlyphRenderer -> Font -> Int -> IO GlyphImage
-renderGlyph gr font gid =
-  GI.withManagedPtr font \font' ->
-  C.withForeignPtr gr.ptr \draw ->
-  C.alloca \pWidth ->
-  C.alloca \pHeight ->
-  C.alloca \pXOrigin ->
-  C.alloca \pYOrigin ->
-  do
-  let gid' = fromIntegral gid
-  buf <- [C.block| void* {
-    hb_codepoint_t gid = $(int gid');
-    unsigned int* p_width = $(unsigned int* pWidth);
-    unsigned int* p_height = $(unsigned int* pHeight);
-    int* p_x_origin = $(int* pXOrigin);
-    int* p_y_origin = $(int* pYOrigin);
-    if (gid == PANGO_GLYPH_EMPTY) {
-      *p_width = *p_height = *p_x_origin = *p_y_origin = 0;
-      return 0;
-    }
-    hb_raster_draw_t* draw = $(hb_raster_draw_t* draw);
-    hb_font_t* font = pango_font_get_hb_font($(PangoFont* font'));
-    float font_pt = hb_font_get_ptem(font);
-    int x_scale, y_scale;
-    hb_font_get_scale(font, &x_scale, &y_scale);
-    hb_raster_draw_set_scale_factor(draw, x_scale / font_pt, y_scale / font_pt);
-    hb_glyph_extents_t glyph_extents;
-    hb_font_get_glyph_extents(font, gid, &glyph_extents);
-    hb_raster_draw_set_glyph_extents(draw, &glyph_extents);
-    hb_raster_draw_glyph(draw, font, gid);
-    hb_raster_image_t* image = hb_raster_draw_render(draw);
-    hb_raster_extents_t raster_extents;
-    hb_raster_image_get_extents(image, &raster_extents);
-    *p_width = raster_extents.width;
-    *p_height = raster_extents.height;
-    *p_x_origin = raster_extents.x_origin;
-    *p_y_origin = raster_extents.y_origin;
-    size_t count = raster_extents.width * raster_extents.height;
-    char* buf = malloc(count);
-    const char* data = hb_raster_image_get_buffer(image);
-    for (int i = 0; i < raster_extents.height; ++i)
-      memcpy(buf + i * raster_extents.width, data + i * raster_extents.stride, raster_extents.width);
-    hb_raster_draw_recycle_image(draw, image);
-    return buf;
-  } |]
-  width <- fromIntegral <$> C.peek pWidth
-  height <- fromIntegral <$> C.peek pHeight
-  xOrigin <- fromIntegral <$> C.peek pXOrigin
-  yOrigin <- fromIntegral <$> C.peek pYOrigin
-  pixels <- C.newForeignPtr p_free buf
-  pure GlyphImage{..}
-
-foreign import ccall "stdlib.h &free"
-  p_free :: C.FunPtr (C.Ptr () -> IO ())
 
 instance Show Font where
   show = Text.unpack . unsafePerformIO . describeFont

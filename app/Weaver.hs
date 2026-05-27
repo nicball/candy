@@ -1,54 +1,62 @@
 {-# LANGUAGE DeriveAnyClass
            , DerivingStrategies
            , QuasiQuotes
+           , TemplateHaskell
+           , ForeignFunctionInterface
            #-}
 
 module Weaver
   ( drawTextCached
+  , drawTextCachedDefaultFont
   , layoutTextCached
+  , layoutTextCachedDefaultFont
   ) where
 
-import Data.Text.Foreign qualified as Text
-import Data.Text (Text)
-import System.IO.Unsafe (unsafePerformIO)
-{-
-import Control.Exception (assert, bracket)
-import Control.Monad (forM, forM_, foldM)
+import Control.Monad (forM, forM_)
 import Data.ByteString qualified as BS
+import Data.Map.Strict qualified as Map
 import Data.String.Interpolate (__i)
-import Data.Text qualified as Text
-import Foreign.C.String qualified as C
-import Foreign.Marshal.Array qualified as C
-import Foreign.Ptr qualified as C
-import Foreign.Storable qualified as C
-import FreeType
+import Data.Text (Text)
+import Foreign.C qualified as C
+import Foreign qualified as C
+import GI.Pango qualified as GI
 import Graphics.GL
+import Language.C.Inline qualified as C
+import System.IO.Unsafe (unsafePerformIO)
+
 import Atlas
--}
-
-import GL 
 import Config 
+import GL 
+import PangoFix.Foreign (pangoCtx)
 import Refcount
+import TextLayout
+import Weaver.Foreign
 
-import TextLayout 
+C.context (C.baseCtx <> pangoCtx <> weaverCtx)
+C.include "<hb.h>"
+C.include "<hb-raster.h>"
+C.include "<pango/pango.h>"
+C.include "<string.h>"
+C.include "<stdlib.h>"
 
-{-
 data Weaver = Weaver
   { program :: GLuint
   , vbo :: GL.Buffer
   , vao :: GL.VertexArray
-  , atlas :: Atlas RenderedGlyph
-  , face :: FontDesc
-  , ftFace :: Refcount FT_Face
+  , atlas :: Atlas (FontDesc, Int) AtlasGlyph
   }
 
-newWeaver :: FontDesc -> IO Weaver
-newWeaver face = do
+data AtlasGlyph = AtlasGlyph
+  { width :: Int
+  , height :: Int
+  , xOrigin :: Int
+  , yOrigin :: Int
+  }
+
+newWeaver :: IO Weaver
+newWeaver = do
   program <- newProgram (Just vertexShaderSource) (Just geometryShaderSource) (Just fragmentShaderSource)
-  ftFace <- getFaceCached face
-  incRef ftFace
-  (cellW, cellH) <- globalBboxSize face.sizePx =<< deref ftFace
-  atlas <- newAtlas 500 cellW cellH
+  atlas <- newAtlas 1024 1024
   bindProgram program do
     tex <- C.withCAString "atlas" (glGetUniformLocation program)
     glUniform1i tex 0
@@ -82,140 +90,168 @@ deleteWeaver weaver = do
   deleteObject weaver.vbo
   deleteObject weaver.vao
   deleteAtlas weaver.atlas
-  decRef weaver.ftFace
 
-withWeaver :: FontDesc -> (Weaver -> IO a) -> IO a
-withWeaver face = bracket (newWeaver face) deleteWeaver
-
-getLineHeight :: FT_Face -> IO Int
-getLineHeight ftFace = do
-  fromIntegral . (`div` 64) . smHeight . srMetrics <$> (C.peek . frSize =<< C.peek ftFace)
-
-getAscender :: FT_Face -> IO Int
-getAscender ftFace = do
-  fromIntegral . (`div` 64) . smAscender . srMetrics <$> (C.peek . frSize =<< C.peek ftFace)
-
-getDescender :: FT_Face -> IO Int
-getDescender ftFace = do
-  fromIntegral . (`div` 64) . smDescender . srMetrics <$> (C.peek . frSize =<< C.peek ftFace)
--}
+{-# NOINLINE defaultWeaver #-}
+defaultWeaver :: Weaver
+defaultWeaver = unsafePerformIO newWeaver
 
 type ColorSpec = [(Int, Int, Color)]
 
-{-
-drawText :: Weaver -> Texture -> ColorSpec -> Text -> IO Resolution
-drawText weaver texture colorspec text = assert (not . Text.null $ text) do
+renderLineLayout :: Weaver -> ColorSpec -> LineLayout -> IO Texture
+renderLineLayout weaver colorSpec layout = do
+  texture <- genObject
+  res <- layoutRes layout
+  glyphs <- layoutGlyphs layout
+  atlasGlyphs <- forM glyphs \glyph -> do
+    font <- describeFont glyph.font
+    queryGlyph weaver.atlas (font, glyph.gid) >>= \case
+      Just item -> pure (glyph, item)
+      Nothing -> do
+        image <- renderGlyphCached glyph.font glyph.gid
+        item <- C.withForeignPtr image.pixels \p ->
+          addGlyph weaver.atlas (font, glyph.gid) image.width image.height p
+            AtlasGlyph{width=image.width, height=image.height, xOrigin=image.xOrigin, yOrigin=image.yOrigin}
+        pure (glyph, item)
+  let glyphsByTexture = Map.fromListWith (++) . map (\g -> ((snd g).texture, [g])) $ atlasGlyphs
   bindProgram weaver.program do
-    withSlot texture2DSlot weaver.atlas.texture do
-      getFaceCached weaver.face >>= flip withRefcount \ftFace -> do
-        lineHeight <- getLineHeight ftFace
-        descender <- getDescender ftFace
-        (textWidth, array) <- genVertexArray 0 (lineHeight + descender - 1)
-        glGenerateMipmap GL_TEXTURE_2D
-        let res = Resolution textWidth lineHeight
-        horiRes <- C.withCAString "hori_res" (glGetUniformLocation weaver.program)
-        glUniform1f horiRes (fromIntegral res.w)
-        vertRes <- C.withCAString "vert_res" (glGetUniformLocation weaver.program)
-        glUniform1f vertRes (fromIntegral res.h)
-        renderToTexture res texture do
-          withSlot vertexArraySlot weaver.vao do
-            withSlot arrayBufferSlot weaver.vbo do
-              writeArrayBuffer array
-              withSlot blendSlot False do
-                glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 10))
-        pure res
+    forM_ (Map.toList glyphsByTexture) \(atlasTexture, glyphItems) -> do
+      withSlot texture2DSlot atlasTexture do
+          glGenerateMipmap GL_TEXTURE_2D
+          horiRes <- C.withCAString "hori_res" (glGetUniformLocation weaver.program)
+          glUniform1f horiRes (fromIntegral res.w)
+          vertRes <- C.withCAString "vert_res" (glGetUniformLocation weaver.program)
+          glUniform1f vertRes (fromIntegral res.h)
+          renderToTexture res texture do
+            withSlot vertexArraySlot weaver.vao do
+              withSlot arrayBufferSlot weaver.vbo do
+                let array = genVertexArray glyphItems
+                writeArrayBuffer array
+                withSlot blendSlot False do
+                  glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 10))
+  pure texture
   where
-    genVertexArray originX originY = do
-      glyphs <- layoutTextCached weaver.face text >>= flip withRefcount Raqm.getGlyphs
-      renderedGlyphs <- renderGlyphToAtlas weaver (fmap (.index) glyphs)
-      (_, maxX, vertices) <- foldM renderGlyph (0, 0, []) (zip glyphs renderedGlyphs)
-      pure (maxX, concat . reverse $ vertices)
-      where
-        renderGlyph (penX, _, result) (glyph, rg) =
-          let
-            xOffset = fromIntegral . (`div` 64) $ glyph.xOffset
-            yOffset = fromIntegral . (`div` 64) $ glyph.yOffset
-            xAdvance = fromIntegral glyph.xAdvance
-            x = (penX `div` 64) + rg.leftBearing + xOffset + originX
-            y = -rg.topBearing + rg.height - yOffset + originY
-            cluster = fromIntegral glyph.cluster
-            vertices = fmap fromIntegral [x, y, rg.width, rg.height, rg.atlasX, rg.atlasY] ++ findColor cluster colorspec
-          in
-            pure (penX + xAdvance, x + max rg.width (xAdvance `div` 64), vertices : result)
-    findColor _ [] = undefined
+    genVertexArray glyphs = concatMap genGlyph glyphs
+    genGlyph (glyph, item) = map fromIntegral
+      [ glyph.x + item.userdata.xOrigin
+      , glyph.y - item.userdata.yOrigin
+      , item.userdata.width
+      , item.userdata.height
+      , item.x
+      , item.y
+      ] ++ findColor glyph.cluster colorSpec
+    findColor _ [] = error "no color"
     findColor idx ((begin, end, color) : cs)
-      | begin <= idx && idx < end = colorToRGBA color
+      | begin <= idx && idx <= end = colorToRGBA color
       | otherwise = findColor idx cs
--}
+
+data GlyphImage = GlyphImage
+  { width :: Int
+  , height :: Int
+  , pixels :: C.ForeignPtr ()
+  , xOrigin :: Int
+  , yOrigin :: Int
+  }
+  deriving Show
+
+newGlyphRenderer :: IO GlyphRenderer
+newGlyphRenderer = GlyphRenderer <$> (C.newForeignPtr p_hb_raster_draw_destroy  =<< [C.exp| hb_raster_draw_t* { hb_raster_draw_create_or_fail() } |])
+
+foreign import ccall "hb-raster.h &hb_raster_draw_destroy"
+  p_hb_raster_draw_destroy :: C.FunPtr (C.Ptr GlyphRenderer -> IO ())
+
+{-# NOINLINE glyphCache #-}
+glyphCache :: Cache (FontDesc, Int) GlyphImage
+glyphCache = unsafePerformIO $ newCache 500
+
+renderGlyphCached :: Font -> Int -> IO GlyphImage
+renderGlyphCached font gid = do
+  fontDesc <- describeFont font
+  let new = do
+        rdr <- newGlyphRenderer
+        renderGlyph rdr font gid
+  deref =<< lookupCache (fontDesc, gid) new (const (pure ())) glyphCache
+
+renderGlyph :: GlyphRenderer -> Font -> Int -> IO GlyphImage
+renderGlyph gr font gid =
+  GI.withManagedPtr font \font' ->
+  C.withForeignPtr gr.ptr \draw ->
+  C.alloca \pWidth ->
+  C.alloca \pHeight ->
+  C.alloca \pXOrigin ->
+  C.alloca \pYOrigin ->
+  do
+  let gid' = fromIntegral gid
+  buf <- [C.block| void* {
+    hb_codepoint_t gid = $(int gid');
+    unsigned int* p_width = $(unsigned int* pWidth);
+    unsigned int* p_height = $(unsigned int* pHeight);
+    int* p_x_origin = $(int* pXOrigin);
+    int* p_y_origin = $(int* pYOrigin);
+    if (gid == PANGO_GLYPH_EMPTY) {
+      *p_width = *p_height = *p_x_origin = *p_y_origin = 0;
+      return 0;
+    }
+    hb_raster_draw_t* draw = $(hb_raster_draw_t* draw);
+    hb_font_t* font = pango_font_get_hb_font($(PangoFont* font'));
+    float font_pt = hb_font_get_ptem(font);
+    int x_scale, y_scale;
+    hb_font_get_scale(font, &x_scale, &y_scale);
+    hb_raster_draw_set_scale_factor(draw, x_scale / font_pt, y_scale / font_pt);
+    hb_glyph_extents_t glyph_extents;
+    hb_font_get_glyph_extents(font, gid, &glyph_extents);
+    hb_raster_draw_set_glyph_extents(draw, &glyph_extents);
+    hb_raster_draw_glyph(draw, font, gid);
+    hb_raster_image_t* image = hb_raster_draw_render(draw);
+    hb_raster_extents_t raster_extents;
+    hb_raster_image_get_extents(image, &raster_extents);
+    *p_width = raster_extents.width;
+    *p_height = raster_extents.height;
+    *p_x_origin = raster_extents.x_origin;
+    *p_y_origin = raster_extents.y_origin;
+    size_t count = raster_extents.width * raster_extents.height;
+    char* buf = malloc(count);
+    const char* data = hb_raster_image_get_buffer(image);
+    for (int i = 0; i < raster_extents.height; ++i)
+      memcpy(buf + i * raster_extents.width, data + i * raster_extents.stride, raster_extents.width);
+    hb_raster_draw_recycle_image(draw, image);
+    return buf;
+  } |]
+  width <- fromIntegral <$> C.peek pWidth
+  height <- fromIntegral <$> C.peek pHeight
+  xOrigin <- fromIntegral <$> C.peek pXOrigin
+  yOrigin <- fromIntegral <$> C.peek pYOrigin
+  pixels <- C.newForeignPtr p_free buf
+  pure GlyphImage{..}
+
+foreign import ccall "stdlib.h &free"
+  p_free :: C.FunPtr (C.Ptr () -> IO ())
 
 {-# NOINLINE textTexCache #-}
-textTexCache :: Cache (FontDesc, ColorSpec, Text) (Texture, Resolution)
+textTexCache :: Cache (LayoutOpt, ColorSpec, Text) (Texture, Resolution)
 textTexCache = unsafePerformIO $ newCache 500
 
-drawTextCached :: FontDesc -> ColorSpec -> Text -> IO (Refcount (Texture, Resolution))
-drawTextCached font colorSpec text = lookupCache (font, colorSpec, text) new (deleteObject . fst) textTexCache
+drawTextCached :: LayoutOpt -> ColorSpec -> Text -> IO (Refcount (Texture, Resolution))
+drawTextCached opts colorSpec text = lookupCache (opts, colorSpec, text) new (deleteObject . fst) textTexCache
   where new = do
-          layout <- layoutTextCached font text
-          tex <- renderLineLayout layout colorSpec
+          layout <- layoutTextCached opts text
+          tex <- renderLineLayout defaultWeaver colorSpec layout
           res <- layoutRes layout
           pure (tex, res)
-{-
-{-# NOINLINE globalFtLib #-}
-globalFtLib :: FT_Library
-globalFtLib = unsafePerformIO ft_Init_FreeType
 
-{-# NOINLINE faceCache #-}
-faceCache :: Cache FontDesc FT_Face
-faceCache = unsafePerformIO $ newCache 5
-
-getFaceCached :: FontDesc -> IO (Refcount FT_Face)
-getFaceCached faceID = lookupCache faceID new (ft_Done_Face) faceCache
-  where
-    new = do
-      face <- ft_New_Face globalFtLib faceID.path (fromIntegral faceID.index)
-      ft_Set_Pixel_Sizes face 0 (fromIntegral faceID.sizePx)
-      pure face
-
-weaverCache :: Cache FontDesc Weaver
-weaverCache = unsafePerformIO $ newCache 5
-
-getWeaverCached :: FontDesc -> IO (Refcount Weaver)
-getWeaverCached faceID = lookupCache faceID (newWeaver faceID) deleteWeaver weaverCache
-
--}
+drawTextCachedDefaultFont :: FontDesc -> ColorSpec -> Text -> IO (Refcount (Texture, Resolution))
+drawTextCachedDefaultFont font = drawTextCached defaultLayoutOpt{defaultFont=Just font}
 
 {-# NOINLINE layoutCache #-}
-layoutCache :: Cache (FontDesc, Text) LineLayout
+layoutCache :: Cache (LayoutOpt, Text) LineLayout
 layoutCache = unsafePerformIO $ newCache 500
 
-layoutTextCached :: FontDesc -> Text -> IO LineLayout
-layoutTextCached font text = deref =<< lookupCache (font, text) new (const (pure ())) layoutCache
+layoutTextCached :: LayoutOpt -> Text -> IO LineLayout
+layoutTextCached opts text = deref =<< lookupCache (opts, text) new (const (pure ())) layoutCache
   where
-    new = newLineLayout text LayoutOpt{width=Nothing, ellipsize=False, fontSpec=[(0, Text.lengthWord8 text, font)]}
+    new = newLineLayout text opts
 
--- layoutTextCached :: FontDesc -> Text -> IO (Refcount Raqm.Raqm)
--- layoutTextCached faceID text = lookupCache (faceID, text) new Raqm.destroy raqmCache
---   where
---     new = do
---       rq <- Raqm.create
---       Raqm.setText rq text
---       Raqm.setLanguage rq "en" 0 (Text.lengthWord8 text)
---       getFaceCached faceID >>= flip withRefcount \face -> do
---         Raqm.setFreetypeFace rq face
---       -- Raqm.addFontFeature rq "dlig"
---       Raqm.layout rq
---       pure rq
-
-{-
-globalBboxSize :: Int -> FT_Face -> IO (Int, Int)
-globalBboxSize fontSizePx facePtr = do
-  face <- C.peek facePtr
-  let
-    FT_BBox{..} = face.frBbox
-    w = bbXMax - bbXMin
-    h = bbYMax - bbYMin
-    scale x = ceiling (fromIntegral x / fromIntegral face.frUnits_per_EM * fromIntegral fontSizePx :: Double)
-  pure (scale w, scale h)
+layoutTextCachedDefaultFont :: FontDesc -> Text -> IO LineLayout
+layoutTextCachedDefaultFont font = layoutTextCached defaultLayoutOpt{defaultFont=Just font}
 
 vertexShaderSource :: BS.ByteString
 vertexShaderSource =
@@ -315,49 +351,3 @@ fragmentShaderSource =
       color = vec4(f_color.rgb, font_grey * f_color.a);
     }
   |]
-
-data RenderedGlyph = RenderedGlyph
-  { atlasX :: Int
-  , atlasY :: Int
-  , width :: Int
-  , height :: Int
-  , leftBearing :: Int
-  , topBearing :: Int
-  }
-  deriving Show
-
-renderGlyphToAtlas :: Weaver -> [Int] -> IO [RenderedGlyph]
-renderGlyphToAtlas weaver glyphIds =
-  forM glyphIds \glyphId ->
-    fst <$> addGlyph glyphId (render glyphId) (\rg -> (rg.atlasX, rg.atlasY)) weaver.atlas
-  where
-    render glyphId = do
-      ftFace <- deref weaver.ftFace
-      ft_Load_Glyph ftFace (fromIntegral glyphId) 0
-      glyphSlotPtr <- frGlyph <$> C.peek ftFace
-      ft_Render_Glyph glyphSlotPtr FT_RENDER_MODE_NORMAL
-      glyphSlot <- C.peek glyphSlotPtr
-      let
-        bitmap = glyphSlot.gsrBitmap
-        leftBearing = fromIntegral glyphSlot.gsrBitmap_left
-        topBearing = fromIntegral glyphSlot.gsrBitmap_top
-        width = fromIntegral bitmap.bPitch
-        height = fromIntegral bitmap.bRows
-        eWidth = fromIntegral bitmap.bWidth
-      pure
-        ( eWidth
-        , height
-        , withReversed (width * height) width eWidth (bBuffer bitmap)
-        , \x y -> RenderedGlyph
-          { atlasX = x
-          , atlasY = y
-          , width = eWidth
-          , height
-          , leftBearing
-          , topBearing
-          }
-        )
-    withReversed len ncol necol arr action = flip C.withArray (action . C.castPtr) . concat . groupNRev ncol necol [] =<< C.peekArray len arr
-    groupNRev _ _ acc [] = acc
-    groupNRev ncol necol acc xs = groupNRev ncol necol (take necol xs : acc) (drop ncol xs)
--}

@@ -70,6 +70,7 @@ executable candy
     GL,
     Config,
     Weaver,
+    Weaver.Foreign,
     Window,
     Document,
     Selection,
@@ -83,7 +84,6 @@ executable candy
     PangoFix,
     PangoFix.Foreign,
     TextLayout,
-    TextLayout.Foreign
 
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:

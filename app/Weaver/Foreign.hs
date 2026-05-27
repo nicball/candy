@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell, QuasiQuotes #-}
 
-module TextLayout.Foreign
-  ( textLayoutCtx
+module Weaver.Foreign
+  ( weaverCtx
   , GlyphRenderer(..)
   ) where
 
@@ -13,8 +13,8 @@ import Foreign qualified as C
 
 newtype GlyphRenderer = GlyphRenderer { ptr :: C.ForeignPtr GlyphRenderer }
 
-textLayoutCtx :: C.Context
-textLayoutCtx = mempty
+weaverCtx :: C.Context
+weaverCtx = mempty
   { C.ctxTypesTable = Map.fromList
     [ (C.TypeName "hb_raster_draw_t", [t| GlyphRenderer |])
     ]
