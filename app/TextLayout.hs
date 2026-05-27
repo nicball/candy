@@ -74,6 +74,13 @@ defaultLayoutOpt = LayoutOpt
   { width = Nothing
   , ellipsize = False
   , fontSpec = []
+    -- [ (i, i + 1, desc)
+    -- | i <- [0 .. 400]
+    -- , italic <- [if i `mod` 8 < 4 then "italic " else " "]
+    -- , bold <- [if i `mod` 10 < 5 then "bold " else " "]
+    -- , size <- [Text.pack (show (i `mod` 20 + 20)) <> "px"]
+    -- , desc <- [italic <> bold <> size]
+    -- ]
   , defaultFont = Nothing
   }
 

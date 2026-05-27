@@ -141,7 +141,7 @@ renderLineLayout weaver colorSpec layout = do
       ] ++ findColor glyph.cluster colorSpec
     findColor _ [] = error "no color"
     findColor idx ((begin, end, color) : cs)
-      | begin <= idx && idx <= end = colorToRGBA color
+      | begin <= idx && idx < end = colorToRGBA color
       | otherwise = findColor idx cs
 
 data GlyphImage = GlyphImage

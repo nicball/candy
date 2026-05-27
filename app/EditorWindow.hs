@@ -169,19 +169,19 @@ instance Draw DefaultEditorWindow where
       setSlot viewportSlot . flip quadToViewport oldViewport $ textQuad
       selRange <- concat <$> forM sels \(p, s) -> do
         range <- maybeToList <$> Selection.selAtLine dew.document s lineIdx
-        pure . fmap (\(b, e) -> (p, b, e)) $ range
+        pure . fmap (\(b, e) -> (p, b, e + 1)) $ range
       let selColorSpec = [ (begin, end, if p then cfg.primarySelectionForeground else cfg.secondarySelectionForeground) | (p, begin, end) <- selRange ]
       let cursorRange = [ (p, s.mark.column) | (p, s) <- sels, s.mark.line == lineIdx ]
-      let cursorColorSpec = [ (pos, pos, if p then cfg.primaryCursorForeground else cfg.secondaryCursorForeground) | (p, pos) <- cursorRange ]
+      let cursorColorSpec = [ (pos, pos + 1, if p then cfg.primaryCursorForeground else cfg.secondaryCursorForeground) | (p, pos) <- cursorRange ]
       let quads = fmap (\(p, begin, end) -> (begin, end, if p then cfg.primarySelectionBackground else cfg.secondarySelectionBackground)) selRange
-            ++ fmap (\(p, pos) -> (pos, pos, if p then cfg.primaryCursorBackground else cfg.secondaryCursorBackground)) cursorRange
+            ++ fmap (\(p, pos) -> (pos, pos + 1, if p then cfg.primaryCursorBackground else cfg.secondaryCursorBackground)) cursorRange
       let screenLineQuad = quadPlus lineQuad (-screenQuad.left) (-screenQuad.top)
       forM_ quads \(begin, end, color) -> do
-        forM_ [begin .. end] \byteOff -> do
+        forM_ [begin .. end - 1] \byteOff -> do
           charQuad <- indexToQuad lineLayout byteOff
           let quad = quadPlus charQuad screenLineQuad.left screenLineQuad.top
           drawQuadColor posterSingleton textRes color quad
-      drawTextCached textOpt (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 lineText - 1, cfg.foreground)]) lineText >>= flip withRefcount \(lnTex, _) -> do
+      drawTextCached textOpt (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 lineText, cfg.foreground)]) lineText >>= flip withRefcount \(lnTex, _) -> do
         drawQuadTexture posterSingleton textRes lnTex screenLineQuad
       setSlot viewportSlot oldViewport
       let numFg = if lineIdx == psel.mark.line
