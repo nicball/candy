@@ -6,57 +6,67 @@ module Atlas
    )
  , newAtlas
  , deleteAtlas
- , withAtlas
- , addGlyph
  ) where
 
-import Control.Concurrent.MVar (MVar, newMVar, modifyMVar)
 import Control.Exception (bracket)
-import Data.Cache.LRU.IO qualified as LRU
 import Foreign qualified as C
 import Graphics.GL
+import Data.IntMap qualified as Map
+import Data.Atlas qualified as Skyline
+import Control.Monad.Primitive (PrimState)
+import Data.IORef
 
 import GL (Texture, GLObject(..), texture2DSlot, withSlot)
 
 data Atlas a = Atlas
-  { cellWidth :: Int
-  , cellHeight :: Int
-  , freeCells :: MVar [(Int, Int)]
-  , glyphIdToCell :: LRU.AtomicLRU Int a
+  { glyphIdToPos :: IORef (Map.IntMap (AtlasItem a))
   , texture :: Texture
   , width :: Int
   , height :: Int
+  , alloc :: Skyline.Atlas (PrimState IO)
   }
 
-newAtlas :: Int -> Int -> Int -> IO (Atlas a)
-newAtlas len w h = do
+data AtlasItem a = AtlasItem
+  { x :: Int
+  , y :: Int
+  , width :: Int
+  , height :: Int
+  , userdata :: a
+  }
+
+newAtlas :: Int -> Int -> IO (Atlas a)
+newAtlas width height = do
   texture <- genObject
-  let numColumns = ceiling (sqrt (fromIntegral len :: Double))
-      numRows = floor (sqrt (fromIntegral len :: Double))
   withSlot texture2DSlot texture do
     glPixelStorei GL_UNPACK_ALIGNMENT 1
-    bracket (C.callocBytes (w * h * numColumns * numRows)) C.free $
-      glTexImage2D GL_TEXTURE_2D 0 GL_RED (fromIntegral (w * numColumns)) (fromIntegral (h * numRows)) 0 GL_RED GL_UNSIGNED_BYTE
+    bracket (C.callocBytes (width * height)) C.free $
+      glTexImage2D GL_TEXTURE_2D 0 GL_RED (fromIntegral width) (fromIntegral height) 0 GL_RED GL_UNSIGNED_BYTE
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
-  glyphIdToCell <- LRU.newAtomicLRU . Just . fromIntegral $ len
-  freeCells <- newMVar . take len $ [(x * w, y * h) | y <- [0 .. numRows - 1], x <- [0 .. numColumns - 1]]
-  pure Atlas
-    { cellWidth = w
-    , cellHeight = h
-    , glyphIdToCell
-    , freeCells
-    , texture
-    , width = w * numColumns
-    , height = h * numRows
-    }
+  glyphIdToPos <- newIORef Map.empty
+  alloc <- Skyline.create width height
+  pure Atlas{..}
 
 deleteAtlas :: Atlas a -> IO ()
 deleteAtlas Atlas{texture} = deleteObject texture
 
-withAtlas :: Int -> Int -> Int -> (Atlas a -> IO b) -> IO b
-withAtlas len w h = bracket (newAtlas len w h) deleteAtlas
+queryGlyph :: Atlas a -> Int -> IO (Maybe (AtlasItem a))
+queryGlyph atlas gid = do
+  m <- readIORef atlas.glyphIdToPos
+  pure $ Map.lookup gid m
 
+addGlyph :: Atlas a -> Int -> Int -> Int -> C.Ptr () -> a -> IO Bool
+addGlyph atlas gid width height pixels userdata = do
+  Skyline.pack1 atlas.alloc (Skyline.Pt width height) >>= \case
+    Nothing -> pure False
+    Just (Skyline.Pt x y) -> do
+      modifyIORef' atlas.glyphIdToPos (Map.insert gid AtlasItem{..})
+      withSlot texture2DSlot atlas.texture do
+        glPixelStorei GL_UNPACK_ALIGNMENT 1
+        glTexSubImage2D GL_TEXTURE_2D 0 (fromIntegral x) (fromIntegral y) (fromIntegral width) (fromIntegral height) GL_RED GL_UNSIGNED_BYTE pixels
+      pure True
+
+{-
 addGlyph :: Int -> IO (Int, Int, (C.Ptr () -> IO ()) -> IO (), Int -> Int -> a) -> (a -> (Int, Int)) -> Atlas a -> IO (a, Maybe Int)
 addGlyph glyphId render cellFromUserdata atlas = do
   found <- LRU.lookup glyphId atlas.glyphIdToCell
@@ -78,3 +88,4 @@ addGlyph glyphId render cellFromUserdata atlas = do
           glTexSubImage2D GL_TEXTURE_2D 0 (fromIntegral x) (fromIntegral y) (fromIntegral atlas.cellWidth) (fromIntegral atlas.cellHeight) GL_RED GL_UNSIGNED_BYTE
         withImage (glTexSubImage2D GL_TEXTURE_2D 0 (fromIntegral x) (fromIntegral y) (fromIntegral w) (fromIntegral h) GL_RED GL_UNSIGNED_BYTE)
       pure (userdata, kicked)
+-}

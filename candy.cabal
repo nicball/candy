@@ -71,7 +71,6 @@ executable candy
     Config,
     Weaver,
     Window,
-    Raqm,
     Document,
     Selection,
     Nexus,
@@ -92,7 +91,6 @@ executable candy
   -- Other library packages from which modules are imported.
   build-depends:
     base,
-    freetype2,
     bytestring,
     text,
     gl,
@@ -103,9 +101,10 @@ executable candy
     string-interpolate,
     hslua,
     gi-pango,
-    gi-pangocairo,
     haskell-gi-base,
-    inline-c
+    inline-c,
+    atlas,
+    primitive
 
   pkgconfig-depends:
     pango,

@@ -28,6 +28,7 @@ import PangoFix.Foreign
 import PangoFix qualified as Pango
 import TextLayout.Foreign
 import System.IO.Unsafe (unsafePerformIO)
+import Refcount
 
 C.context (C.baseCtx <> pangoCtx <> textLayoutCtx)
 C.include "hb.h"
@@ -89,17 +90,20 @@ layoutRes layout = do
 
 positionToIndex :: LineLayout -> Int -> Int -> IO Int
 positionToIndex layout x y = do
-  (_, index, _) <- Pango.layoutXyToIndex layout (fromIntegral x) (fromIntegral y)
+  (_, index, _) <- Pango.layoutXyToIndex layout (fromIntegral x * 1024) (fromIntegral y * 1024)
   pure $ fromIntegral index
 
 indexToQuad :: LineLayout -> Int -> IO Quad
 indexToQuad layout index = do
-  (strongPos, weakPos) <- Pango.layoutGetCursorPos layout (fromIntegral index)
-  lineHeight <- fromIntegral <$> Pango.getRectangleHeight strongPos
-  top <- fromIntegral <$> Pango.getRectangleY strongPos
-  x1 <- fromIntegral <$> Pango.getRectangleX weakPos
-  x2 <- fromIntegral <$> Pango.getRectangleX strongPos
+  (p1, _) <- Pango.layoutGetCursorPos layout (fromIntegral index)
+  (p2, _) <- Pango.layoutGetCursorPos layout (fromIntegral index + 1)
+  lineHeight <- scale <$> Pango.getRectangleHeight p1
+  top <- scale <$> Pango.getRectangleY p1
+  x1 <- scale <$> Pango.getRectangleX p1
+  x2 <- scale <$> Pango.getRectangleX p2
   pure $ quadFromYXRange top (top + lineHeight - 1) (min x1 x2) (max x1 x2)
+  where
+    scale x = fromIntegral (x `div` 1024)
 
 layoutGlyphs :: LineLayout -> IO [GlyphInfo]
 layoutGlyphs layout = do
@@ -118,15 +122,15 @@ layoutGlyphs layout = do
       glyphStr <- fromJust <$> Pango.getGlyphItemGlyphs run
       font <- fromJust <$> (Pango.getAnalysisFont =<< Pango.getItemAnalysis . fromJust =<< Pango.getGlyphItemItem run)
       glyphInfos <- Pango.getGlyphStringGlyphs glyphStr
+      glyphClusters <- Pango.getGlyphStringLogClusters' glyphStr
       glyphX <- newIORef glyphStrX
-      forM_ glyphInfos \glyphInfo -> do
+      forM_ (zip glyphInfos glyphClusters) \(glyphInfo, cluster) -> do
         gid <- fromIntegral <$> Pango.getGlyphInfoGlyph glyphInfo
         geo <- Pango.getGlyphInfoGeometry glyphInfo
         advance <- scale <$> Pango.getGlyphGeometryWidth geo
         x <- (+) <$> readIORef glyphX <*> (scale <$> Pango.getGlyphGeometryXOffset geo)
         y <- (runBaseLine +) . scale <$> Pango.getGlyphGeometryYOffset geo
         modifyIORef glyphX (+ advance)
-        let cluster = 0 -- FIXME
         modifyIORef glyphs (GlyphInfo{..} :)
       runEndX <- (+) <$> readIORef glyphX <*> (scale <$> Pango.getGlyphItemEndXOffset run)
       writeIORef runX runEndX
@@ -139,7 +143,7 @@ layoutGlyphs layout = do
 type ColorSpec = [(Int, Int, Color)]
 
 renderLineLayout :: LineLayout -> ColorSpec -> IO Texture
-renderLineLayout layout _ = do
+renderLineLayout layout colorSpec = do
   texture <- genObject
   Resolution width height <- layoutRes layout
   glyphs <- layoutGlyphs layout
@@ -147,9 +151,9 @@ renderLineLayout layout _ = do
   buf <- C.mallocForeignPtrBytes bufSize
   C.withForeignPtr buf \pBuf -> do
     C.fillBytes pBuf 0 bufSize
-    renderer <- newGlyphRenderer
     forM_ glyphs \gi -> do
-      image <- renderGlyph renderer gi.font gi.gid
+      let color = findColor gi.cluster colorSpec
+      image <- renderGlyphCached gi.font gi.gid
       let left = gi.x + image.xOrigin
       let bottom = height - (gi.y - image.yOrigin)
       forM_ [0 .. image.height - 1] \row -> do
@@ -157,9 +161,9 @@ renderLineLayout layout _ = do
         let src = row * image.width
         C.withForeignPtr image.pixels \pixels -> do
           forM_ [0 .. image.width - 1] \col -> do
-            C.poke (pBuf `C.plusPtr` (dst + col * 4 + 0)) (255 :: C.CChar)
-            C.poke (pBuf `C.plusPtr` (dst + col * 4 + 1)) (255 :: C.CChar)
-            C.poke (pBuf `C.plusPtr` (dst + col * 4 + 2)) (255 :: C.CChar)
+            C.poke (pBuf `C.plusPtr` (dst + col * 4 + 0)) (cvt color.red)
+            C.poke (pBuf `C.plusPtr` (dst + col * 4 + 1)) (cvt color.green)
+            C.poke (pBuf `C.plusPtr` (dst + col * 4 + 2)) (cvt color.blue)
             grey <- C.peek (pixels `C.plusPtr` (src + col))
             C.poke (pBuf `C.plusPtr` (dst + col * 4 + 3)) (grey :: C.CChar)
     withSlot texture2DSlot texture do
@@ -169,6 +173,13 @@ renderLineLayout layout _ = do
       glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
       glGenerateMipmap GL_TEXTURE_2D
   pure texture
+  where
+    findColor _ [] = error "no color"
+    findColor idx ((begin, end, color) : cs)
+      | begin <= idx && idx <= end = color
+      | otherwise = findColor idx cs
+    cvt :: Float -> C.CChar
+    cvt f = truncate $ f * 255
 
 loadFont :: FontDesc -> IO (Maybe Font)
 loadFont desc = Pango.contextLoadFont defaultLayoutContext =<< Pango.fontDescriptionFromString desc
@@ -190,6 +201,18 @@ newGlyphRenderer = GlyphRenderer <$> (C.newForeignPtr p_hb_raster_draw_destroy  
 
 foreign import ccall "hb-raster.h &hb_raster_draw_destroy"
   p_hb_raster_draw_destroy :: C.FunPtr (C.Ptr GlyphRenderer -> IO ())
+
+{-# NOINLINE glyphCache #-}
+glyphCache :: Cache (FontDesc, Int) GlyphImage
+glyphCache = unsafePerformIO $ newCache 500
+
+renderGlyphCached :: Font -> Int -> IO GlyphImage
+renderGlyphCached font gid = do
+  fontDesc <- describeFont font
+  let new = do
+        rdr <- newGlyphRenderer
+        renderGlyph rdr font gid
+  deref =<< lookupCache (fontDesc, gid) new (const (pure ())) glyphCache
 
 renderGlyph :: GlyphRenderer -> Font -> Int -> IO GlyphImage
 renderGlyph gr font gid =

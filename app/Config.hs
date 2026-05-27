@@ -87,7 +87,10 @@ nord15 = Color 0.705882 0.556863 0.678431 1
 {-# NOINLINE config #-}
 config :: IORef Config
 config = unsafePerformIO . newIORef $ Config
-  { font = "Source Han Sans 24"
+  { font =
+      -- "Source Han Sans 24"
+      "Iosevka 24"
+      -- "Source Han Serif 24"
   , foreground = nord6
   , background = nord0 -- { alpha = 0.8 }
   , primarySelectionForeground = nord0

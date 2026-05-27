@@ -7,7 +7,7 @@
 
     packages.x86_64-linux.candy =
       with import nixpkgs { system = "x86_64-linux"; overlays = [ (self: super: { harfbuzz = self.callPackage ./harfbuzz {}; }) ]; };
-      haskellPackages.callPackage ./package.nix {};
+      haskellPackages.callPackage ./package.nix { pangoft2 = pango; harfbuzz-raster = harfbuzz; };
 
     packages.x86_64-linux.default = self.packages.x86_64-linux.candy;
 

@@ -10,6 +10,7 @@ module Weaver
 
 import Data.Text.Foreign qualified as Text
 import Data.Text (Text)
+import System.IO.Unsafe (unsafePerformIO)
 {-
 import Control.Exception (assert, bracket)
 import Control.Monad (forM, forM_, foldM)
@@ -22,7 +23,6 @@ import Foreign.Ptr qualified as C
 import Foreign.Storable qualified as C
 import FreeType
 import Graphics.GL
-import System.IO.Unsafe (unsafePerformIO)
 import Atlas
 -}
 
@@ -146,26 +146,19 @@ drawText weaver texture colorspec text = assert (not . Text.null $ text) do
     findColor idx ((begin, end, color) : cs)
       | begin <= idx && idx < end = colorToRGBA color
       | otherwise = findColor idx cs
+-}
 
 {-# NOINLINE textTexCache #-}
 textTexCache :: Cache (FontDesc, ColorSpec, Text) (Texture, Resolution)
 textTexCache = unsafePerformIO $ newCache 500
--}
 
 drawTextCached :: FontDesc -> ColorSpec -> Text -> IO (Refcount (Texture, Resolution))
-drawTextCached font _ text = do
-  layout <- newLineLayout text LayoutOpt{width=Nothing, ellipsize=False, fontSpec=[(0, Text.lengthWord8 text, font)]}
-  tex <- renderLineLayout layout []
-  res <- layoutRes layout
-  newRefcount (tex, res) (deleteObject tex)
--- drawTextCached face colorspec text = do
---   lookupCache (face, colorspec, text) new (deleteObject . fst) textTexCache
---   where
---     new = do
---       tex <- genObject
---       res <- getWeaverCached face >>= flip withRefcount \weaver -> drawText weaver tex colorspec text
---       pure (tex, res)
-
+drawTextCached font colorSpec text = lookupCache (font, colorSpec, text) new (deleteObject . fst) textTexCache
+  where new = do
+          layout <- layoutTextCached font text
+          tex <- renderLineLayout layout colorSpec
+          res <- layoutRes layout
+          pure (tex, res)
 {-
 {-# NOINLINE globalFtLib #-}
 globalFtLib :: FT_Library
@@ -189,14 +182,16 @@ weaverCache = unsafePerformIO $ newCache 5
 getWeaverCached :: FontDesc -> IO (Refcount Weaver)
 getWeaverCached faceID = lookupCache faceID (newWeaver faceID) deleteWeaver weaverCache
 
-{-# NOINLINE raqmCache #-}
-raqmCache :: Cache (FontDesc, Text) Raqm.Raqm
-raqmCache = unsafePerformIO $ newCache 500
 -}
 
+{-# NOINLINE layoutCache #-}
+layoutCache :: Cache (FontDesc, Text) LineLayout
+layoutCache = unsafePerformIO $ newCache 500
+
 layoutTextCached :: FontDesc -> Text -> IO LineLayout
-layoutTextCached font text = do
-  newLineLayout text LayoutOpt{width=Nothing, ellipsize=False, fontSpec=[(0, Text.lengthWord8 text, font)]}
+layoutTextCached font text = deref =<< lookupCache (font, text) new (const (pure ())) layoutCache
+  where
+    new = newLineLayout text LayoutOpt{width=Nothing, ellipsize=False, fontSpec=[(0, Text.lengthWord8 text, font)]}
 
 -- layoutTextCached :: FontDesc -> Text -> IO (Refcount Raqm.Raqm)
 -- layoutTextCached faceID text = lookupCache (faceID, text) new Raqm.destroy raqmCache
