@@ -94,28 +94,7 @@ instance SendKey DefaultEditorWindow where
             Document.patch (fmap (, "") ivs) dew.document
           (GMKNone, GLFW.Key'Enter) -> sendChar '\n' dew
           _ -> pure ()
-    ensureCursorRangeOnScreen
-    where
-      ensureCursorRangeOnScreen = do
-        cfg <- readIORef config
-        Resolution screenWidth screenHeight <- readIORef dew.lastTextRes
-        sel <- NE.head . (.value) <$> readIORef dew.selections
-        let opts = defaultLayoutOpt{defaultFont=Just cfg.font, width=Just screenWidth}
-        (_, _, lineLayout, lineQuad) <- (!! sel.mark.line) <$> getLineInfo opts dew.document
-        markQuad <- (\q -> quadPlus q lineQuad.left lineQuad.top) <$> indexToQuad lineLayout sel.mark.column
-        let markXPos = (markQuad.left + markQuad.right) `div` 2
-        let markYPos = (markQuad.top + markQuad.bottom) `div` 2
-        screenYPos <- readIORef dew.screenYPos
-        screenXPos <- readIORef dew.screenXPos
-        let
-          (topRange, bottomRange) = cfg.cursorVerticalRangeOnScreen
-          maxScreenYPos = markYPos - truncate (fromIntegral screenHeight * topRange)
-          minScreenYPos = markYPos - truncate (fromIntegral screenHeight * bottomRange)
-          (leftRange, rightRange) = cfg.cursorHorizontalRangeOnScreen
-          maxScreenXPos = markXPos - truncate (fromIntegral screenWidth * leftRange)
-          minScreenXPos = markXPos - truncate (fromIntegral screenWidth * rightRange)
-        writeIORef dew.screenYPos . max 0 . min maxScreenYPos . max minScreenYPos $ screenYPos
-        writeIORef dew.screenXPos . max 0 . min maxScreenXPos . max minScreenXPos $ screenXPos
+    makeCursorOnScreen dew
 
 instance SendChar DefaultEditorWindow where
   sendChar char dew = eatFirstChar do
@@ -124,11 +103,34 @@ instance SendChar DefaultEditorWindow where
       InsertMode -> do
         ivs <- fmap (\s -> Document.Iv s.mark s.mark) . NE.toList . (.value) <$> readIORef dew.selections
         Document.patch (fmap (, Text.singleton char) ivs) dew.document
+        makeCursorOnScreen dew
     where
       eatFirstChar action =
         readIORef dew.eatFirstChar >>= \case
           True -> writeIORef dew.eatFirstChar False
           False -> action
+
+makeCursorOnScreen :: DefaultEditorWindow -> IO ()
+makeCursorOnScreen dew = do
+  cfg <- readIORef config
+  Resolution screenWidth screenHeight <- readIORef dew.lastTextRes
+  sel <- NE.head . (.value) <$> readIORef dew.selections
+  let opts = defaultLayoutOpt{defaultFont=Just cfg.font, width=Just screenWidth}
+  (_, _, lineLayout, lineQuad) <- (!! sel.mark.line) <$> getLineInfo opts dew.document
+  markQuad <- (\q -> quadPlus q lineQuad.left lineQuad.top) <$> indexToQuad lineLayout sel.mark.column
+  let markXPos = (markQuad.left + markQuad.right) `div` 2
+  let markYPos = (markQuad.top + markQuad.bottom) `div` 2
+  screenYPos <- readIORef dew.screenYPos
+  screenXPos <- readIORef dew.screenXPos
+  let
+    (topRange, bottomRange) = cfg.cursorVerticalRangeOnScreen
+    maxScreenYPos = markYPos - truncate (fromIntegral screenHeight * topRange)
+    minScreenYPos = markYPos - truncate (fromIntegral screenHeight * bottomRange)
+    (leftRange, rightRange) = cfg.cursorHorizontalRangeOnScreen
+    maxScreenXPos = markXPos - truncate (fromIntegral screenWidth * leftRange)
+    minScreenXPos = markXPos - truncate (fromIntegral screenWidth * rightRange)
+  writeIORef dew.screenYPos . max 0 . min maxScreenYPos . max minScreenYPos $ screenYPos
+  writeIORef dew.screenXPos . max 0 . min maxScreenXPos . max minScreenXPos $ screenXPos
 
 getLineInfo :: LayoutOpt -> Document -> IO [(Int, Text, LineLayout, Quad)]
 getLineInfo opts document = do
@@ -189,7 +191,7 @@ instance Draw DefaultEditorWindow where
       when (lineIdx == psel.mark.line) do
         drawQuadColor posterSingleton res cfg.lineNumbersCurrentBackground numQuad
       drawTextCachedDefaultFont cfg.font [(0, 100, numFg)] (Text.pack (show lineIdx)) >>= flip withRefcount \(numTex, numRes) -> do
-        drawQuadTexture posterSingleton res numTex $ quadFromBottomLeftWH 5 numQuad.bottom numRes.w numRes.h
+        drawQuadTexture posterSingleton res numTex $ quadFromTopLeftWH 5 numQuad.top numRes.w numRes.h
 
 swapNewLine :: Text -> Text
 swapNewLine t = if "\n" `Text.isSuffixOf` t then Text.dropEnd 1 t <> " " else t

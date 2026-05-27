@@ -15,11 +15,11 @@ import EditorWindow
 import Bar
 import Document
 
-import Selection
-import Data.List.NonEmpty
+import TextLayout
 
 main :: IO ()
 main = do
+  test
   withGLFW . withWindow 800 600 "Candy" $ \win -> do
     setSlot blendSlot True
     glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
@@ -67,6 +67,7 @@ main = do
       draw (Resolution w h) wm
       GLFW.swapBuffers win
 
+{-
 data DummyWindow = DummyWindow
 instance EditorWindow DummyWindow where
   new _ = pure DummyWindow
@@ -89,3 +90,4 @@ instance Box DummyBox where
   expandableX _ = True
   expandableY _ = True
   safeDraw _ _ = pure ()
+-}

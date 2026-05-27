@@ -12,6 +12,7 @@ module TextLayout
   , GlyphInfo(..)
   , describeFont
   , defaultLayoutOpt
+  , test
   ) where
 
 import Config (FontDesc)
@@ -28,6 +29,8 @@ import Language.C.Inline qualified as C
 import PangoFix.Foreign (pangoCtx)
 import PangoFix qualified as Pango
 import System.IO.Unsafe (unsafePerformIO)
+
+import Data.Text.Foreign qualified as Text
 
 C.context (C.baseCtx <> pangoCtx)
 C.include "<pango/pango.h>"
@@ -74,14 +77,32 @@ defaultLayoutOpt = LayoutOpt
   , defaultFont = Nothing
   }
 
+test = do
+  let text = "abc defghijklmn"
+  layout <- newLineLayout text defaultLayoutOpt{width=Just 40, defaultFont=Just "Dejavu Sans Mono 14"}
+  forM_ [0 .. Text.lengthWord8 text - 1] \i -> do
+    print i
+    print =<< Pango.layoutMoveCursorVisually layout True (fromIntegral i) 0 1
+    print =<< Pango.layoutMoveCursorVisually layout True (fromIntegral i) 1 1
+    (s, w) <- Pango.layoutGetCursorPos layout (fromIntegral i)
+    prect s
+    prect w
+    prect =<< Pango.layoutIndexToPos layout (fromIntegral i)
+    putChar '\n'
+    where prect r = do
+            x <- (`div` 1024) <$> Pango.getRectangleX r
+            w <- (`div` 1024) <$> Pango.getRectangleWidth r
+            y <- (`div` 1024) <$> Pango.getRectangleY r
+            h <- (`div` 1024) <$> Pango.getRectangleHeight r
+            putStrLn $ show x <> "-" <> show (x + w) <> " " <> show y <> show (y + h)
+
 newLineLayout :: Text -> LayoutOpt -> IO LineLayout
 newLineLayout text opts = do
   layout <- Pango.layoutNew defaultLayoutContext
-  if opts.ellipsize
-    then Pango.layoutSetEllipsize layout Pango.EllipsizeModeEnd
-    else Pango.layoutSetEllipsize layout Pango.EllipsizeModeNone
-  maybe (pure ()) (Pango.layoutSetFontDescription layout . Just <=< Pango.fontDescriptionFromString) opts.defaultFont
   Pango.layoutSetWidth layout (maybe (-1) ((* 1024) . fromIntegral) opts.width)
+  Pango.layoutSetWrap layout Pango.WrapModeWordChar
+  Pango.layoutSetEllipsize layout (if opts.ellipsize then Pango.EllipsizeModeEnd else Pango.EllipsizeModeNone)
+  maybe (pure ()) (Pango.layoutSetFontDescription layout . Just <=< Pango.fontDescriptionFromString) opts.defaultFont
   Pango.layoutSetText layout text (-1)
   attrs <- Pango.attrListNew
   forM_ opts.fontSpec \(start, end, descStr) -> do
@@ -105,13 +126,19 @@ positionToIndex layout x y = do
 
 indexToQuad :: LineLayout -> Int -> IO Quad
 indexToQuad layout index = do
-  (p1, _) <- Pango.layoutGetCursorPos layout (fromIntegral index)
-  (p2, _) <- Pango.layoutGetCursorPos layout (fromIntegral index + 1)
-  lineHeight <- scale <$> Pango.getRectangleHeight p1
-  top <- scale <$> Pango.getRectangleY p1
-  x1 <- scale <$> Pango.getRectangleX p1
-  x2 <- scale <$> Pango.getRectangleX p2
-  pure $ quadFromYXRange top (top + lineHeight - 1) (min x1 x2) (max x1 x2)
+  -- (p1, _) <- Pango.layoutGetCursorPos layout (fromIntegral index)
+  -- (p2, _) <- Pango.layoutGetCursorPos layout (fromIntegral index + 1)
+  -- lineHeight <- scale <$> Pango.getRectangleHeight p1
+  -- top <- scale <$> Pango.getRectangleY p1
+  -- x1 <- scale <$> Pango.getRectangleX p1
+  -- x2 <- scale <$> Pango.getRectangleX p2
+  -- pure $ quadFromYXRange top (top + lineHeight - 1) (min x1 x2) (max x1 x2)
+  p <- Pango.layoutIndexToPos layout (fromIntegral index)
+  y <- scale <$> Pango.getRectangleY p
+  x <- scale <$> Pango.getRectangleX p
+  w <- scale <$> Pango.getRectangleWidth p
+  h <- scale <$> Pango.getRectangleHeight p
+  pure $ quadFromTopLeftWH (min x (x + w)) y (max 10 (abs w)) h {- DIRTY HACK! -}
   where
     scale x = fromIntegral (x `div` 1024)
 
@@ -131,8 +158,9 @@ layoutGlyphs layout = do
       runBaseLine <- (baseline -) . scale <$> Pango.getGlyphItemYOffset run
       glyphStr <- fromJust <$> Pango.getGlyphItemGlyphs run
       font <- fromJust <$> (Pango.getAnalysisFont =<< Pango.getItemAnalysis . fromJust =<< Pango.getGlyphItemItem run)
+      runOffset <- fromIntegral <$> (Pango.getItemOffset . fromJust =<< Pango.getGlyphItemItem run)
       glyphInfos <- Pango.getGlyphStringGlyphs glyphStr
-      glyphClusters <- Pango.getGlyphStringLogClusters' glyphStr
+      glyphClusters <- map (runOffset +) <$> Pango.getGlyphStringLogClusters' glyphStr
       glyphX <- newIORef glyphStrX
       forM_ (zip glyphInfos glyphClusters) \(glyphInfo, cluster) -> do
         gid <- fromIntegral <$> Pango.getGlyphInfoGlyph glyphInfo
