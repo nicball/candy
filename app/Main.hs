@@ -23,7 +23,7 @@ main = do
   withGLFW . withWindow 800 600 "Candy" $ \win -> do
     setSlot blendSlot True
     glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
-    ew <- new =<< fromFile "./test.txt" :: IO DefaultEditorWindow
+    ew <- new =<< fromFile "./app/EditorWindow.hs" :: IO DefaultEditorWindow
     withDefaultWindowManager ew \wm -> do
       withDefaultBar \bar -> do
         setBar bar wm

@@ -126,7 +126,7 @@ renderLineLayout weaver colorSpec layout = do
               withSlot arrayBufferSlot weaver.vbo do
                 let array = genVertexArray glyphItems
                 writeArrayBuffer array
-                withSlot blendSlot False do
+                withSlot blendFuncSlot (GL_ONE, GL_ONE, GL_ONE, GL_ONE) do
                   glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 10))
   pure texture
   where
@@ -227,11 +227,11 @@ foreign import ccall "stdlib.h &free"
   p_free :: C.FunPtr (C.Ptr () -> IO ())
 
 {-# NOINLINE textTexCache #-}
-textTexCache :: Cache (LayoutOpt, ColorSpec, Text) (Texture, Resolution)
-textTexCache = unsafePerformIO $ newCache 500
+textTexCache :: Cache (Text, ColorSpec, LayoutOpt) (Texture, Resolution)
+textTexCache = unsafePerformIO $ newCache 2000
 
 drawTextCached :: LayoutOpt -> ColorSpec -> Text -> IO (Refcount (Texture, Resolution))
-drawTextCached opts colorSpec text = lookupCache (opts, colorSpec, text) new (deleteObject . fst) textTexCache
+drawTextCached opts colorSpec text = lookupCache (text, colorSpec, opts) new (deleteObject . fst) textTexCache
   where new = do
           layout <- layoutTextCached opts text
           tex <- renderLineLayout defaultWeaver colorSpec layout
@@ -242,11 +242,11 @@ drawTextCachedDefaultFont :: FontDesc -> ColorSpec -> Text -> IO (Refcount (Text
 drawTextCachedDefaultFont font = drawTextCached defaultLayoutOpt{defaultFont=Just font}
 
 {-# NOINLINE layoutCache #-}
-layoutCache :: Cache (LayoutOpt, Text) LineLayout
-layoutCache = unsafePerformIO $ newCache 500
+layoutCache :: Cache (Text, LayoutOpt) LineLayout
+layoutCache = unsafePerformIO $ newCache 2000
 
 layoutTextCached :: LayoutOpt -> Text -> IO LineLayout
-layoutTextCached opts text = deref =<< lookupCache (opts, text) new (const (pure ())) layoutCache
+layoutTextCached opts text = deref =<< lookupCache (text, opts) new (const (pure ())) layoutCache
   where
     new = newLineLayout text opts
 
@@ -348,6 +348,7 @@ fragmentShaderSource =
 
     void main() {
       float font_grey = texture(atlas, f_tex_coord).r;
-      color = vec4(f_color.rgb, font_grey * f_color.a);
+      vec3 rgb = font_grey == 0 ? vec3(0, 0, 0) : f_color.rgb;
+      color = vec4(rgb, font_grey * f_color.a);
     }
   |]

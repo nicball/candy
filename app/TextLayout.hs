@@ -29,8 +29,10 @@ import Language.C.Inline qualified as C
 import PangoFix.Foreign (pangoCtx)
 import PangoFix qualified as Pango
 import System.IO.Unsafe (unsafePerformIO)
+import Refcount
+import Control.Exception (Exception, throwIO)
 
-import Data.Text.Foreign qualified as Text
+import Data.Text.IO qualified as Text
 
 C.context (C.baseCtx <> pangoCtx)
 C.include "<pango/pango.h>"
@@ -48,7 +50,7 @@ data LayoutOpt = LayoutOpt
   }
   deriving (Eq, Ord)
 
-type FontSpec = [(Int, Int, FontDesc)]
+type FontSpec = Text
 
 data GlyphInfo = GlyphInfo
   { gid :: Int
@@ -73,9 +75,10 @@ defaultLayoutOpt :: LayoutOpt
 defaultLayoutOpt = LayoutOpt
   { width = Nothing
   , ellipsize = False
-  , fontSpec = []
-    -- [ (i, i + 1, desc)
-    -- | i <- [0 .. 400]
+  , fontSpec = ""
+    -- mconcat
+    -- [ Text.pack (show i) <> " " <> Text.pack (show (i + 1)) <> " font-desc \"" <> desc <> "\"\n"
+    -- | i <- [0 .. 400] :: [Int]
     -- , italic <- [if i `mod` 8 < 4 then "italic " else " "]
     -- , bold <- [if i `mod` 10 < 5 then "bold " else " "]
     -- , size <- [Text.pack (show (i `mod` 20 + 20)) <> "px"]
@@ -85,23 +88,10 @@ defaultLayoutOpt = LayoutOpt
   }
 
 test = do
-  let text = "abc defghijklmn"
-  layout <- newLineLayout text defaultLayoutOpt{width=Just 40, defaultFont=Just "Dejavu Sans Mono 14"}
-  forM_ [0 .. Text.lengthWord8 text - 1] \i -> do
-    print i
-    print =<< Pango.layoutMoveCursorVisually layout True (fromIntegral i) 0 1
-    print =<< Pango.layoutMoveCursorVisually layout True (fromIntegral i) 1 1
-    (s, w) <- Pango.layoutGetCursorPos layout (fromIntegral i)
-    prect s
-    prect w
-    prect =<< Pango.layoutIndexToPos layout (fromIntegral i)
-    putChar '\n'
-    where prect r = do
-            x <- (`div` 1024) <$> Pango.getRectangleX r
-            w <- (`div` 1024) <$> Pango.getRectangleWidth r
-            y <- (`div` 1024) <$> Pango.getRectangleY r
-            h <- (`div` 1024) <$> Pango.getRectangleHeight r
-            putStrLn $ show x <> "-" <> show (x + w) <> " " <> show y <> show (y + h)
+  Text.putStrLn defaultLayoutOpt.fontSpec
+  attrs <- Pango.attrListFromString defaultLayoutOpt.fontSpec
+  str <- maybe (pure "parse failed") Pango.attrListToString attrs
+  Text.putStrLn str
 
 newLineLayout :: Text -> LayoutOpt -> IO LineLayout
 newLineLayout text opts = do
@@ -111,15 +101,23 @@ newLineLayout text opts = do
   Pango.layoutSetEllipsize layout (if opts.ellipsize then Pango.EllipsizeModeEnd else Pango.EllipsizeModeNone)
   maybe (pure ()) (Pango.layoutSetFontDescription layout . Just <=< Pango.fontDescriptionFromString) opts.defaultFont
   Pango.layoutSetText layout text (-1)
-  attrs <- Pango.attrListNew
-  forM_ opts.fontSpec \(start, end, descStr) -> do
-    desc <- Pango.fontDescriptionFromString descStr
-    attr <- Pango.attrFontDescNew desc
-    Pango.setAttributeStartIndex attr (fromIntegral start)
-    Pango.setAttributeEndIndex attr (fromIntegral end)
-    Pango.attrListInsert attrs attr
+  attrs <- attrListFromStringCached opts.fontSpec
   Pango.layoutSetAttributes layout (Just attrs)
   pure layout
+
+{-# NOINLINE attrListCache #-}
+attrListCache :: Cache Text Pango.AttrList
+attrListCache = unsafePerformIO $ newCache 500
+
+data FontSpecParseError = FontSpecParseError Text
+  deriving Show
+
+instance Exception FontSpecParseError
+
+attrListFromStringCached :: Text -> IO Pango.AttrList
+attrListFromStringCached str = deref =<< lookupCache str new (const (pure ())) attrListCache
+  where
+    new = maybe (throwIO (FontSpecParseError str)) pure =<< Pango.attrListFromString str
 
 layoutRes :: LineLayout -> IO Resolution
 layoutRes layout = do
@@ -145,7 +143,7 @@ indexToQuad layout index = do
   x <- scale <$> Pango.getRectangleX p
   w <- scale <$> Pango.getRectangleWidth p
   h <- scale <$> Pango.getRectangleHeight p
-  pure $ quadFromTopLeftWH (min x (x + w)) y (max 10 (abs w)) h {- DIRTY HACK! -}
+  pure $ quadFromTopLeftWH (min x (x + w)) y (max 1 (abs w)) h {- DIRTY HACK! -}
   where
     scale x = fromIntegral (x `div` 1024)
 

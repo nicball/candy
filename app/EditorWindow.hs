@@ -3,7 +3,7 @@ module EditorWindow
   ) where
 
 import Control.Monad (forM, forM_, join, when)
-import Data.IORef (IORef, modifyIORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List.NonEmpty qualified as NE
 import Data.List (partition)
 import Data.Maybe (maybeToList)
@@ -17,7 +17,7 @@ import Box (drawableBox)
 import Config (ConfigT(..), config)
 import Document (Document, Coord(..), DocumentType(..))
 import Document qualified
-import GL (drawQuadColor, drawQuadTexture, quadFromBottomLeftWH, quadFromTopLeftWH, quadToViewport, viewportSlot, posterSingleton, GLSlot(..), Resolution(..), clearViewport, quadSize, quadFromYXRange, quadOverlap, Quad(..), quadPlus)
+import GL (drawQuadColor, drawQuadTexture, quadFromTopLeftWH, quadToViewport, viewportSlot, posterSingleton, GLSlot(..), Resolution(..), clearViewport, quadSize, quadFromYXRange, quadOverlap, Quad(..), quadPlus)
 import Nexus (ListenerID)
 import Nexus qualified
 import Refcount (withRefcount)
@@ -54,7 +54,7 @@ instance EditorWindow DefaultEditorWindow where
     minSize <- newIORef 1
     selections <- newIORef . Selections . NE.singleton $ Selection (Coord 0 0) (Coord 0 0)
     onPatchToken <- flip Nexus.addListener document.onPatch \translate -> do
-      modifyIORef selections (translateSelections translate)
+      modifyIORef' selections (translateSelections translate)
     mode <- newIORef NormalMode
     eatFirstChar <- newIORef False
     insertExitCallback <- newIORef (pure ())
@@ -66,7 +66,7 @@ instance EditorWindow DefaultEditorWindow where
 
 instance Scroll DefaultEditorWindow where
   scroll _ y dew = do
-    modifyIORef dew.screenYPos (max 0 . (\p -> p - truncate y))
+    modifyIORef' dew.screenYPos (max 0 . (\p -> p - truncate y))
 
 instance SendKey DefaultEditorWindow where
   sendKey key mods dew = do
@@ -130,7 +130,7 @@ makeCursorOnScreen dew = do
     maxScreenXPos = markXPos - truncate (fromIntegral screenWidth * leftRange)
     minScreenXPos = markXPos - truncate (fromIntegral screenWidth * rightRange)
   writeIORef dew.screenYPos . max 0 . min maxScreenYPos . max minScreenYPos $ screenYPos
-  writeIORef dew.screenXPos . max 0 . min maxScreenXPos . max minScreenXPos $ screenXPos
+  -- writeIORef dew.screenXPos . max 0 . min maxScreenXPos . max minScreenXPos $ screenXPos
 
 getLineInfo :: LayoutOpt -> Document -> IO [(Int, Text, LineLayout, Quad)]
 getLineInfo opts document = do
@@ -201,7 +201,7 @@ instance GetBox DefaultEditorWindow where
     s <- readIORef dew.minSize
     pure . drawableBox (Resolution s s) True True $ dew
 
-type Command = DefaultEditorWindow-> IO ()
+type Command = DefaultEditorWindow -> IO ()
 
 type KeyCandidates = [([(GLFW.ModifierKeys, GLFW.Key)], Command)]
 newtype Keymap = Keymap { candidates :: KeyCandidates }
@@ -275,12 +275,12 @@ normalKeymap = Keymap
     )
   , ( [(noneMod, GLFW.Key'I)]
     , \dew -> do
-      modifyIORef dew.selections (Selections . fmap Selection.turnLeft . (.value))
+      modifyIORef' dew.selections (Selections . fmap Selection.turnLeft . (.value))
       enterInsert dew
     )
   , ( [(noneMod, GLFW.Key'A)]
     , \dew -> do
-      modifyIORef dew.selections (Selections . fmap Selection.turnRight . (.value))
+      modifyIORef' dew.selections (Selections . fmap Selection.turnRight . (.value))
       sels <- (.value) <$> readIORef dew.selections
       end <- Document.endOfDocument dew.document
       when (any (\s -> s.mark == end) sels) do

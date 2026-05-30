@@ -42,6 +42,8 @@ module GL
   , clearViewport
   , BlendSlot
   , blendSlot
+  , BlendFuncSlot
+  , blendFuncSlot
   , renderToTexture
   , Resolution(..)
   , pixelQuadToNDC
@@ -339,6 +341,19 @@ blendSlot = BlendSlot
 instance GLSlot Bool BlendSlot where
   getSlot _ = (/= 0) <$> C.alloca (\p -> glGetBooleanv GL_BLEND p >> C.peek p)
   setSlot _ b = if b then glEnable GL_BLEND else glDisable GL_BLEND
+
+data BlendFuncSlot = BlendFuncSlot
+
+blendFuncSlot :: BlendFuncSlot
+blendFuncSlot = BlendFuncSlot
+
+instance GLSlot (GLenum, GLenum, GLenum, GLenum) BlendFuncSlot where
+  getSlot _ = (,,,)
+    <$> C.alloca (\p -> glGetIntegerv GL_BLEND_SRC_RGB   p >> fromIntegral <$> C.peek p)
+    <*> C.alloca (\p -> glGetIntegerv GL_BLEND_SRC_ALPHA p >> fromIntegral <$> C.peek p)
+    <*> C.alloca (\p -> glGetIntegerv GL_BLEND_DST_RGB   p >> fromIntegral <$> C.peek p)
+    <*> C.alloca (\p -> glGetIntegerv GL_BLEND_DST_ALPHA p >> fromIntegral <$> C.peek p)
+  setSlot _ (sRGB, sA, dRGB, dA) = glBlendFuncSeparate sRGB dRGB sA dA
 
 renderToTexture :: Resolution -> Texture -> IO a -> IO a
 renderToTexture res texture render = do
