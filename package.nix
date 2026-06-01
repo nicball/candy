@@ -1,7 +1,7 @@
 { mkDerivation, atlas, base, bytestring, containers, gi-pango, gl
-, GLFW-b, harfbuzz, harfbuzz-raster, haskell-gi-base, hslua
-, inline-c, lib, lrucache, pango, pangoft2, primitive
-, string-interpolate, text, text-icu
+, GLFW-b, harfbuzz, harfbuzz-raster, hashable, haskell-gi-base
+, hslua, inline-c, lib, lrucaching, pango, pangoft2, primitive
+, regex-tdfa, string-interpolate, text, text-icu
 }:
 mkDerivation {
   pname = "candy";
@@ -10,8 +10,9 @@ mkDerivation {
   isLibrary = false;
   isExecutable = true;
   executableHaskellDepends = [
-    atlas base bytestring containers gi-pango gl GLFW-b haskell-gi-base
-    hslua inline-c lrucache primitive string-interpolate text text-icu
+    atlas base bytestring containers gi-pango gl GLFW-b hashable
+    haskell-gi-base hslua inline-c lrucaching primitive regex-tdfa
+    string-interpolate text text-icu
   ];
   executablePkgconfigDepends = [
     harfbuzz harfbuzz-raster pango pangoft2

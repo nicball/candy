@@ -84,6 +84,7 @@ executable candy
     PangoFix,
     PangoFix.Foreign,
     TextLayout,
+    Highlighter,
 
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:
@@ -96,7 +97,8 @@ executable candy
     gl,
     GLFW-b,
     containers,
-    lrucache,
+    lrucaching,
+    hashable,
     text-icu,
     string-interpolate,
     hslua,
@@ -105,6 +107,7 @@ executable candy
     inline-c,
     atlas,
     primitive,
+    regex-tdfa,
 
   pkgconfig-depends:
     pango,
@@ -128,4 +131,5 @@ executable candy
     DuplicateRecordFields,
     MultiWayIf,
     PatternSynonyms,
-    DerivingStrategies
+    DerivingStrategies,
+    DeriveAnyClass,

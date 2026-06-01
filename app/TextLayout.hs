@@ -16,21 +16,23 @@ module TextLayout
   ) where
 
 import Config (FontDesc)
+import Control.Exception (Exception, throwIO)
 import Control.Monad (forM_, when, (<=<))
 import Data.Function (fix)
 import Data.GI.Base qualified as GI
+import Data.Hashable (Hashable)
 import Data.IORef
 import Data.Maybe (fromJust)
 import Data.Text qualified as Text
 import Data.Text (Text)
+import GHC.Generics (Generic)
 import GI.Pango qualified as Pango
 import GL
 import Language.C.Inline qualified as C
 import PangoFix.Foreign (pangoCtx)
 import PangoFix qualified as Pango
-import System.IO.Unsafe (unsafePerformIO)
 import Refcount
-import Control.Exception (Exception, throwIO)
+import System.IO.Unsafe (unsafePerformIO)
 
 import Data.Text.IO qualified as Text
 
@@ -48,7 +50,8 @@ data LayoutOpt = LayoutOpt
   , fontSpec :: FontSpec
   , defaultFont :: Maybe FontDesc
   }
-  deriving (Eq, Ord)
+  deriving stock (Generic, Eq, Ord)
+  deriving anyclass Hashable
 
 type FontSpec = Text
 
@@ -110,9 +113,8 @@ attrListCache :: Cache Text Pango.AttrList
 attrListCache = unsafePerformIO $ newCache 500
 
 data FontSpecParseError = FontSpecParseError Text
-  deriving Show
-
-instance Exception FontSpecParseError
+  deriving stock Show
+  deriving anyclass Exception
 
 attrListFromStringCached :: Text -> IO Pango.AttrList
 attrListFromStringCached str = deref =<< lookupCache str new (const (pure ())) attrListCache

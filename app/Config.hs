@@ -14,10 +14,11 @@ module Config
   , config
   ) where
 
+import Data.Hashable (Hashable(..))
 import Data.IORef (IORef, newIORef)
-import System.IO.Unsafe (unsafePerformIO)
-import GHC.Generics (Generic)
 import Data.Text (Text)
+import GHC.Generics (Generic)
+import System.IO.Unsafe (unsafePerformIO)
 
 data ColorT f = Color
   { red :: f
@@ -26,6 +27,9 @@ data ColorT f = Color
   , alpha :: f
   }
   deriving (Generic, Show, Eq, Ord)
+
+instance Hashable a => Hashable (ColorT a) where
+  hashWithSalt s (Color r g b a) = hashWithSalt s (r, g, b, a)
 
 type Color = ColorT Float
 

@@ -5,17 +5,17 @@ module Refcount
   , decRef
   , deref
   , withRefcount
-
   , Cache
   , newCache
   , deleteCache
   , lookupCache
   ) where
 
-import Data.IORef (IORef, newIORef, modifyIORef, readIORef, writeIORef)
-import Control.Monad (when)
 import Control.Exception (assert, finally)
-import Data.Cache.LRU.IO qualified as LRU
+import Control.Monad (when)
+import Data.Hashable (Hashable)
+import Data.IORef (IORef, newIORef, modifyIORef, readIORef, writeIORef)
+import Data.LruCache.IO.Finalizer qualified as LRU
 
 data Refcount a = Refcount
   { value :: a
@@ -47,23 +47,17 @@ withRefcount rc action = do
   incRef rc
   action rc.value `finally` decRef rc
 
-newtype Cache k v = Cache (LRU.AtomicLRU k (Refcount v))
+newtype Cache k v = Cache (LRU.LruHandle k (Refcount v))
 
-newCache :: Ord k => Int -> IO (Cache k v)
-newCache size = Cache <$> LRU.newAtomicLRU (Just . fromIntegral $ size)
+newCache :: Int -> IO (Cache k v)
+newCache size = Cache <$> LRU.newLruHandle size
 
-deleteCache :: Ord k => Cache k v -> IO ()
-deleteCache (Cache lru) =
-  mapM_ decRef . fmap snd =<< LRU.toList lru
+deleteCache :: Cache k v -> IO ()
+deleteCache (Cache (LRU.LruHandle r)) = mapM_ (decRef . fst) =<< readIORef r
 
-lookupCache :: Ord k => k -> IO v -> (v -> IO ()) -> Cache k v -> IO (Refcount v)
-lookupCache key new delete (Cache lru) = do
-  LRU.lookup key lru >>= flip maybe pure do
-    value <- new
-    rc <- newRefcount value (delete value)
-    LRU.maxSize lru >>= maybe (pure ()) \limit -> do
-      s <- LRU.size lru
-      when (s == fromIntegral limit) do
-        LRU.pop lru >>= maybe (pure ()) (decRef . snd)
-    LRU.insert key rc lru
-    pure rc
+lookupCache :: (Hashable k, Ord k) => k -> IO v -> (v -> IO ()) -> Cache k v -> IO (Refcount v)
+lookupCache key new delete (Cache lru) = LRU.cached lru key newRc decRef
+  where
+    newRc = do
+      value <- new
+      newRefcount value (delete value)
