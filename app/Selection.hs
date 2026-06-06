@@ -33,7 +33,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NE
 import Data.List (partition, sortOn)
 
-import Document (breakAfterCoord, breakBeforeCoord, charBreaker, countBreaks, moveCoord, wordBreaker, Coord(..), Document, lastCharOffset, Iv(..), Patch(..), countLines, lastCharOffset, charLengthAt)
+import Document (breakAfterCoord, breakBeforeCoord, charBreaker, countBreaks, moveCoord, wordBreaker, Coord(..), Document, Iv(..), Patch(..), countLines, charLengthAt, lastCharOffset)
 import Document qualified
 
 data Selection = SelectionWithTarget { anchor :: Coord, mark :: Coord, target :: Maybe Int }

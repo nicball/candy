@@ -67,7 +67,7 @@ test :: IO ()
 test = run do
   defGenericRecordType
   pop 1
-  pushGenericRecord (coerce config :: IORef (ConfigT (LuaPrim Float) (LuaPrim Int) (LuaPrim String)))
+  pushGenericRecord (coerce config :: IORef (ConfigT (LuaPrim Float) (LuaPrim Int) (LuaPrim Text)))
   setglobal "config"
   openio
   setglobal "io"

@@ -2,6 +2,8 @@
 
 module TextLayout
   ( newLineLayout
+  , layoutTextCached
+  , layoutTextCachedDefaultFont
   , LayoutOpt(..)
   , LineLayout
   , layoutGlyphs
@@ -32,7 +34,8 @@ import Language.C.Inline qualified as C
 import PangoFix.Foreign (pangoCtx)
 import PangoFix qualified as Pango
 import Refcount
-import System.IO.Unsafe (unsafePerformIO)
+import System.IO.Unsafe (unsafePerformIO, unsafeInterleaveIO)
+import Lines
 
 import Data.Text.IO qualified as Text
 
@@ -96,8 +99,8 @@ test = do
   str <- maybe (pure "parse failed") Pango.attrListToString attrs
   Text.putStrLn str
 
-newLineLayout :: Text -> LayoutOpt -> IO LineLayout
-newLineLayout text opts = do
+newLineLayout :: Text -> LayoutOpt -> LineLayout
+newLineLayout text opts = unsafePerformIO do
   layout <- Pango.layoutNew defaultLayoutContext
   Pango.layoutSetWidth layout (maybe (-1) ((* 1024) . fromIntegral) opts.width)
   Pango.layoutSetWrap layout Pango.WrapModeWordChar
@@ -108,6 +111,18 @@ newLineLayout text opts = do
   Pango.layoutSetAttributes layout (Just attrs)
   pure layout
 
+{-# NOINLINE layoutCache #-}
+layoutCache :: Cache (Text, LayoutOpt) LineLayout
+layoutCache = unsafePerformIO $ newCache 2000
+
+layoutTextCached :: LayoutOpt -> Text -> IO LineLayout
+layoutTextCached opts text = unsafeInterleaveIO $ deref =<< lookupCache (text, opts) new (const (pure ())) layoutCache
+  where
+    new = pure $ newLineLayout text opts
+
+layoutTextCachedDefaultFont :: FontDesc -> Text -> IO LineLayout
+layoutTextCachedDefaultFont font = layoutTextCached defaultLayoutOpt{defaultFont=Just font}
+
 {-# NOINLINE attrListCache #-}
 attrListCache :: Cache Text Pango.AttrList
 attrListCache = unsafePerformIO $ newCache 500
@@ -117,22 +132,22 @@ data FontSpecParseError = FontSpecParseError Text
   deriving anyclass Exception
 
 attrListFromStringCached :: Text -> IO Pango.AttrList
-attrListFromStringCached str = deref =<< lookupCache str new (const (pure ())) attrListCache
+attrListFromStringCached str = unsafeInterleaveIO $ deref =<< lookupCache str new (const (pure ())) attrListCache
   where
     new = maybe (throwIO (FontSpecParseError str)) pure =<< Pango.attrListFromString str
 
-layoutRes :: LineLayout -> IO Resolution
-layoutRes layout = do
+layoutRes :: LineLayout -> Resolution
+layoutRes layout = unsafePerformIO do
   (w, h) <- Pango.layoutGetPixelSize layout
   pure $ Resolution (fromIntegral w) (fromIntegral h)
 
-positionToIndex :: LineLayout -> Int -> Int -> IO Int
-positionToIndex layout x y = do
+positionToIndex :: LineLayout -> Int -> Int -> Int
+positionToIndex layout x y = unsafePerformIO do
   (_, index, _) <- Pango.layoutXyToIndex layout (fromIntegral x * 1024) (fromIntegral y * 1024)
   pure $ fromIntegral index
 
-indexToQuad :: LineLayout -> Int -> IO Quad
-indexToQuad layout index = do
+indexToQuad :: LineLayout -> Int -> Quad
+indexToQuad layout index = unsafePerformIO do
   -- (p1, _) <- Pango.layoutGetCursorPos layout (fromIntegral index)
   -- (p2, _) <- Pango.layoutGetCursorPos layout (fromIntegral index + 1)
   -- lineHeight <- scale <$> Pango.getRectangleHeight p1
@@ -149,8 +164,8 @@ indexToQuad layout index = do
   where
     scale x = fromIntegral (x `div` 1024)
 
-layoutGlyphs :: LineLayout -> IO [GlyphInfo]
-layoutGlyphs layout = do
+layoutGlyphs :: LineLayout -> [GlyphInfo]
+layoutGlyphs layout = unsafePerformIO do
   iter <- Pango.layoutGetIter layout
   glyphs <- newIORef []
   fix \loop -> do
@@ -228,11 +243,11 @@ renderLineLayout layout colorSpec = do
     cvt f = truncate $ f * 255
 -}
 
-loadFont :: FontDesc -> IO (Maybe Font)
-loadFont desc = Pango.contextLoadFont defaultLayoutContext =<< Pango.fontDescriptionFromString desc
+-- loadFont :: FontDesc -> IO (Maybe Font)
+-- loadFont desc = Pango.contextLoadFont defaultLayoutContext =<< Pango.fontDescriptionFromString desc
 
-describeFont :: Font -> IO FontDesc
-describeFont font = Pango.fontDescriptionToString =<< Pango.fontDescribeWithAbsoluteSize font
+describeFont :: Font -> FontDesc
+describeFont font = unsafePerformIO $ Pango.fontDescriptionToString =<< Pango.fontDescribeWithAbsoluteSize font
 
 instance Show Font where
-  show = Text.unpack . unsafePerformIO . describeFont
+  show = Text.unpack . describeFont

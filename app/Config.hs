@@ -36,8 +36,8 @@ type Color = ColorT Float
 colorToRGBA :: Color -> [Float]
 colorToRGBA Color{..} = [ red, green, blue, alpha ]
 
-data ConfigT f i s = Config
-  { font :: FontDesc
+data ConfigT f i t = Config
+  { font :: t
   , background :: ColorT f
   , foreground :: ColorT f
   , primarySelectionForeground :: ColorT f
@@ -62,7 +62,7 @@ data ConfigT f i s = Config
   }
   deriving (Generic)
 
-type Config = ConfigT Float Int String
+type Config = ConfigT Float Int Text
 
 type FontDesc = Text
 

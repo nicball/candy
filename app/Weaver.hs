@@ -100,10 +100,10 @@ type ColorSpec = [(Int, Int, Color)]
 renderLineLayout :: Weaver -> ColorSpec -> LineLayout -> IO Texture
 renderLineLayout weaver colorSpec layout = do
   texture <- genObject
-  res <- layoutRes layout
-  glyphs <- layoutGlyphs layout
+  let res = layoutRes layout
+  let glyphs = layoutGlyphs layout
   atlasGlyphs <- forM glyphs \glyph -> do
-    font <- describeFont glyph.font
+    let font = describeFont glyph.font
     queryGlyph weaver.atlas (font, glyph.gid) >>= \case
       Just item -> pure (glyph, item)
       Nothing -> do
@@ -165,7 +165,7 @@ glyphCache = unsafePerformIO $ newCache 500
 
 renderGlyphCached :: Font -> Int -> IO GlyphImage
 renderGlyphCached font gid = do
-  fontDesc <- describeFont font
+  let fontDesc = describeFont font
   let new = do
         rdr <- newGlyphRenderer
         renderGlyph rdr font gid
@@ -235,23 +235,11 @@ drawTextCached opts colorSpec text = lookupCache (text, colorSpec, opts) new (de
   where new = do
           layout <- layoutTextCached opts text
           tex <- renderLineLayout defaultWeaver colorSpec layout
-          res <- layoutRes layout
+          let res = layoutRes layout
           pure (tex, res)
 
 drawTextCachedDefaultFont :: FontDesc -> ColorSpec -> Text -> IO (Refcount (Texture, Resolution))
 drawTextCachedDefaultFont font = drawTextCached defaultLayoutOpt{defaultFont=Just font}
-
-{-# NOINLINE layoutCache #-}
-layoutCache :: Cache (Text, LayoutOpt) LineLayout
-layoutCache = unsafePerformIO $ newCache 2000
-
-layoutTextCached :: LayoutOpt -> Text -> IO LineLayout
-layoutTextCached opts text = deref =<< lookupCache (text, opts) new (const (pure ())) layoutCache
-  where
-    new = newLineLayout text opts
-
-layoutTextCachedDefaultFont :: FontDesc -> Text -> IO LineLayout
-layoutTextCachedDefaultFont font = layoutTextCached defaultLayoutOpt{defaultFont=Just font}
 
 vertexShaderSource :: BS.ByteString
 vertexShaderSource =

@@ -88,13 +88,13 @@ instance SendKey DefaultEditorWindow where
             ivs <- traverse (\s -> flip Document.Iv s.mark <$> Document.moveCoord dew.document (-1) s.mark) sels
             Document.patch (fmap (, "") ivs) dew.document
           (GMKNone, GLFW.Key'Delete) -> do
-            end <- Document.endOfDocument dew.document
+            end <- Document.lastCharCoord dew.document
             sels <- filter ((/= end) . (.mark)) . NE.toList . (.value) <$> readIORef dew.selections
             ivs <- traverse (selToIv dew.document) sels
             Document.patch (fmap (, "") ivs) dew.document
           (GMKNone, GLFW.Key'Enter) -> sendChar '\n' dew
           _ -> pure ()
-    makeCursorOnScreen dew
+    moveScreenWithCursor dew
 
 instance SendChar DefaultEditorWindow where
   sendChar char dew = eatFirstChar do
@@ -103,21 +103,21 @@ instance SendChar DefaultEditorWindow where
       InsertMode -> do
         ivs <- fmap (\s -> Document.Iv s.mark s.mark) . NE.toList . (.value) <$> readIORef dew.selections
         Document.patch (fmap (, Text.singleton char) ivs) dew.document
-        makeCursorOnScreen dew
+        moveScreenWithCursor dew
     where
       eatFirstChar action =
         readIORef dew.eatFirstChar >>= \case
           True -> writeIORef dew.eatFirstChar False
           False -> action
 
-makeCursorOnScreen :: DefaultEditorWindow -> IO ()
-makeCursorOnScreen dew = do
+moveScreenWithCursor :: DefaultEditorWindow -> IO ()
+moveScreenWithCursor dew = do
   cfg <- readIORef config
   Resolution screenWidth screenHeight <- readIORef dew.lastTextRes
   sel <- NE.head . (.value) <$> readIORef dew.selections
   let opts = defaultLayoutOpt{defaultFont=Just cfg.font, width=Just screenWidth}
   (_, _, lineLayout, lineQuad) <- (!! sel.mark.line) <$> getLineInfo opts dew.document
-  markQuad <- (\q -> quadPlus q lineQuad.left lineQuad.top) <$> indexToQuad lineLayout sel.mark.column
+  let markQuad = quadPlus (indexToQuad lineLayout sel.mark.column) lineQuad.left lineQuad.top
   let markXPos = (markQuad.left + markQuad.right) `div` 2
   let markYPos = (markQuad.top + markQuad.bottom) `div` 2
   screenYPos <- readIORef dew.screenYPos
@@ -130,7 +130,7 @@ makeCursorOnScreen dew = do
     maxScreenXPos = markXPos - truncate (fromIntegral screenWidth * leftRange)
     minScreenXPos = markXPos - truncate (fromIntegral screenWidth * rightRange)
   writeIORef dew.screenYPos . max 0 . min maxScreenYPos . max minScreenYPos $ screenYPos
-  -- writeIORef dew.screenXPos . max 0 . min maxScreenXPos . max minScreenXPos $ screenXPos
+  writeIORef dew.screenXPos . max 0 . min maxScreenXPos . max minScreenXPos $ screenXPos
 
 getLineInfo :: LayoutOpt -> Document -> IO [(Int, Text, LineLayout, Quad)]
 getLineInfo opts document = do
@@ -139,7 +139,7 @@ getLineInfo opts document = do
   forM [0 .. totalLines - 1] \idx -> do
     ln <- swapNewLine <$> Document.getLine idx document
     layout <- layoutTextCached opts ln
-    res <- layoutRes layout
+    let res = layoutRes layout
     p <- readIORef pos
     writeIORef pos (p + res.h)
     pure (idx, ln, layout, quadFromYXRange (p + 1) (p + res.h) 0 (res.w - 1))
@@ -150,7 +150,7 @@ instance Draw DefaultEditorWindow where
     clearViewport cfg.background
     let margin = 20
     totalLines <- Document.countLines dew.document
-    digitWidth <- (.w) <$> (layoutRes =<< layoutTextCachedDefaultFont cfg.font "0")
+    digitWidth <- (.w) . layoutRes <$> layoutTextCachedDefaultFont cfg.font "0"
     let lineNumberWidth = (+ 10) . (* digitWidth) . max 1 . ceiling . logBase 10 . (+ 1) . (fromIntegral :: Int -> Double) $ totalLines
     drawQuadColor posterSingleton res cfg.lineNumbersBackground $ quadFromTopLeftWH 0 0 lineNumberWidth res.h
     let textQuad = quadFromTopLeftWH (lineNumberWidth + margin) 0 (res.w - lineNumberWidth - margin) res.h
@@ -161,7 +161,8 @@ instance Draw DefaultEditorWindow where
     screenXPos <- readIORef dew.screenXPos
     let screenQuad = quadFromTopLeftWH screenXPos screenYPos textRes.w textRes.h
     let textOpt = defaultLayoutOpt{defaultFont=Just cfg.font, width=Just textRes.w}
-    visibleLines <- filter (\(_, _, _, quad) -> quadOverlap quad screenQuad) <$> getLineInfo textOpt dew.document
+    let findFirstGroup p = takeWhile p . dropWhile (not . p)
+    visibleLines <- findFirstGroup (\(_, _, _, quad) -> quadOverlap quad screenQuad) <$> getLineInfo textOpt dew.document
     sels <- (\(p NE.:| xs) -> (True, p) : fmap (False, ) xs) . (.value) <$> readIORef dew.selections
     psel <- NE.head . (.value) <$> readIORef dew.selections
     oldViewport <- getSlot viewportSlot
@@ -178,7 +179,7 @@ instance Draw DefaultEditorWindow where
       let screenLineQuad = quadPlus lineQuad (-screenQuad.left) (-screenQuad.top)
       forM_ quads \(begin, end, color) -> do
         forM_ [begin .. end - 1] \byteOff -> do
-          charQuad <- indexToQuad lineLayout byteOff
+          let charQuad = indexToQuad lineLayout byteOff
           let quad = quadPlus charQuad screenLineQuad.left screenLineQuad.top
           drawQuadColor posterSingleton textRes color quad
       drawTextCached textOpt (cursorColorSpec ++ selColorSpec ++ [(0, Text.lengthWord8 lineText, cfg.foreground)]) lineText >>= flip withRefcount \(lnTex, _) -> do
@@ -282,7 +283,7 @@ normalKeymap = Keymap
     , \dew -> do
       modifyIORef' dew.selections (Selections . fmap Selection.turnRight . (.value))
       sels <- (.value) <$> readIORef dew.selections
-      end <- Document.endOfDocument dew.document
+      end <- Document.lastCharCoord dew.document
       when (any (\s -> s.mark == end) sels) do
         len <- Document.charLengthAt dew.document end
         let c = end { column = end.column + len }
@@ -305,7 +306,7 @@ normalKeymap = Keymap
     )
   , ( [(shiftMod, GLFW.Key'5)]
     , movement \doc _ -> do
-      end <- Document.endOfDocument doc
+      end <- Document.lastCharCoord doc
       pure . NE.singleton $ Selection (Coord 0 0) end
     )
   , ( [(altMod, GLFW.Key'Semicolon)]
@@ -337,11 +338,11 @@ normalKeymap = Keymap
           numLines <- Document.countLines dew.document
           newSel <- if sel.mark.line /= numLines - 1
             then do
+              cfg <- readIORef config
               target <- maybe (getTarget dew sel) pure sel.target
               nextLine <- swapNewLine <$> Document.getLine (sel.mark.line + 1) dew.document
               newCol <- (\layout -> positionToIndex layout target 0)
-                =<< flip layoutTextCachedDefaultFont nextLine . (.font)
-                =<< readIORef config
+                <$> layoutTextCachedDefaultFont cfg.font nextLine
               let newMark = Coord (sel.mark.line + 1) newCol
               pure $ SelectionWithTarget newMark newMark (Just target)
             else pure $ Selection sel.mark sel.mark
@@ -354,11 +355,11 @@ normalKeymap = Keymap
         moveOne sel = do
           newSel <- if sel.mark.line /= 0
             then do
+              cfg <- readIORef config
               target <- maybe (getTarget dew sel) pure sel.target
               prevLine <- swapNewLine <$> Document.getLine (sel.mark.line - 1) dew.document
               newCol <- (\layout -> positionToIndex layout target 0)
-                =<< flip layoutTextCachedDefaultFont prevLine . (.font)
-                =<< readIORef config
+                <$> layoutTextCachedDefaultFont cfg.font prevLine
               let newMark = Coord (sel.mark.line - 1) newCol
               pure $ SelectionWithTarget newMark newMark (Just target)
             else pure $ Selection sel.mark sel.mark
@@ -373,5 +374,5 @@ getTarget dew sel = do
   line <- Document.getLine mark.line dew.document
   font <- (.font) <$> readIORef config
   layout <- layoutTextCachedDefaultFont font line
-  quad <- indexToQuad layout mark.column
+  let quad = indexToQuad layout mark.column
   pure $ (quad.left + quad.right) `div` 2
