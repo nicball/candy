@@ -103,6 +103,7 @@ executable candy
     text-icu,
     string-interpolate,
     hslua,
+    gi-glib,
     gi-pango,
     haskell-gi-base,
     inline-c,

@@ -1,9 +1,10 @@
 module Main (main) where
 
+import GI.GLib qualified as GLib
 import Graphics.UI.GLFW qualified as GLFW
 import Graphics.GL
 import Control.Concurrent (threadDelay)
-import Control.Monad (unless, when)
+import Control.Monad (unless, void, when)
 import Data.Function (fix)
 import Data.IORef (writeIORef, readIORef, newIORef)
 
@@ -23,7 +24,7 @@ main = do
   withGLFW . withWindow 800 600 "Candy" $ \win -> do
     setSlot blendSlot True
     glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
-    ew <- new =<< fromFile "./app/EditorWindow.hs" :: IO DefaultEditorWindow
+    ew <- new =<< fromFile "./test.txt" :: IO DefaultEditorWindow
     withDefaultWindowManager ew \wm -> do
       withDefaultBar \bar -> do
         setBar bar wm
@@ -47,6 +48,8 @@ main = do
           readIORef shouldRedraw >>= flip when do
             redraw wm win
             writeIORef shouldRedraw False
+          -- Pango object finalizers queue native releases on GLib's default context.
+          void (GLib.mainContextIteration Nothing False)
           end <- GLFW.getTimerValue
           let sleepAmount = 25000 - (end - begin) * 1000000 `div` timerFreq
           when (sleepAmount > 0) (threadDelay . fromIntegral $ sleepAmount)

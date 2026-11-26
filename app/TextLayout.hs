@@ -113,7 +113,7 @@ newLineLayout text opts = unsafePerformIO do
 
 {-# NOINLINE layoutCache #-}
 layoutCache :: Cache (Text, LayoutOpt) LineLayout
-layoutCache = unsafePerformIO $ newCache 2000
+layoutCache = unsafePerformIO $ newCache 128
 
 layoutTextCached :: LayoutOpt -> Text -> IO LineLayout
 layoutTextCached opts text = unsafeInterleaveIO $ deref =<< lookupCache (text, opts) new (const (pure ())) layoutCache
@@ -125,7 +125,7 @@ layoutTextCachedDefaultFont font = layoutTextCached defaultLayoutOpt{defaultFont
 
 {-# NOINLINE attrListCache #-}
 attrListCache :: Cache Text Pango.AttrList
-attrListCache = unsafePerformIO $ newCache 500
+attrListCache = unsafePerformIO $ newCache 128
 
 data FontSpecParseError = FontSpecParseError Text
   deriving stock Show

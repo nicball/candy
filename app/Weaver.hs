@@ -162,7 +162,7 @@ foreign import ccall "hb-raster.h &hb_raster_draw_destroy"
 
 {-# NOINLINE glyphCache #-}
 glyphCache :: Cache (FontDesc, Int) GlyphImage
-glyphCache = unsafePerformIO $ newCache 500
+glyphCache = unsafePerformIO $ newCache 128
 
 renderGlyphCached :: Font -> Int -> IO GlyphImage
 renderGlyphCached font gid = do
@@ -229,7 +229,7 @@ foreign import ccall "stdlib.h &free"
 
 {-# NOINLINE textTexCache #-}
 textTexCache :: Cache (Text, ColorSpec, LayoutOpt) (Texture, Resolution)
-textTexCache = unsafePerformIO $ newCache 2000
+textTexCache = unsafePerformIO $ newCache 128
 
 drawTextCached :: LayoutOpt -> ColorSpec -> Text -> IO (Refcount (Texture, Resolution))
 drawTextCached opts colorSpec text = lookupCache (text, colorSpec, opts) new (deleteObject . fst) textTexCache
