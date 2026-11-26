@@ -60,10 +60,6 @@ newWeaver = do
   bindProgram program do
     tex <- C.withCAString "atlas" (glGetUniformLocation program)
     glUniform1i tex 0
-    texWidth <- C.withCAString "tex_width" (glGetUniformLocation program)
-    glUniform1f texWidth (fromIntegral atlas.width)
-    texHeight <- C.withCAString "tex_height" (glGetUniformLocation program)
-    glUniform1f texHeight (fromIntegral atlas.height)
   vbo <- genObject
   vao <- genObject
   withSlot arrayBufferSlot vbo do
@@ -114,20 +110,20 @@ renderLineLayout weaver colorSpec layout = do
         pure (glyph, item)
   let glyphsByTexture = Map.fromListWith (++) . map (\g -> ((snd g).texture, [g])) $ atlasGlyphs
   bindProgram weaver.program do
-    forM_ (Map.toList glyphsByTexture) \(atlasTexture, glyphItems) -> do
-      withSlot texture2DSlot atlasTexture do
-          glGenerateMipmap GL_TEXTURE_2D
-          horiRes <- C.withCAString "hori_res" (glGetUniformLocation weaver.program)
-          glUniform1f horiRes (fromIntegral res.w)
-          vertRes <- C.withCAString "vert_res" (glGetUniformLocation weaver.program)
-          glUniform1f vertRes (fromIntegral res.h)
-          renderToTexture res texture do
-            withSlot vertexArraySlot weaver.vao do
-              withSlot arrayBufferSlot weaver.vbo do
+    horiRes <- C.withCAString "hori_res" (glGetUniformLocation weaver.program)
+    glUniform1f horiRes (fromIntegral res.w)
+    vertRes <- C.withCAString "vert_res" (glGetUniformLocation weaver.program)
+    glUniform1f vertRes (fromIntegral res.h)
+    renderToTexture res texture do
+      withSlot vertexArraySlot weaver.vao do
+        withSlot arrayBufferSlot weaver.vbo do
+          withSlot blendFuncSlot (GL_ONE, GL_ONE, GL_ONE, GL_ONE) do
+            forM_ (Map.toList glyphsByTexture) \(atlasTexture, glyphItems) -> do
+              withSlot texture2DSlot atlasTexture do
+                glGenerateMipmap GL_TEXTURE_2D
                 let array = genVertexArray glyphItems
                 writeArrayBuffer array
-                withSlot blendFuncSlot (GL_ONE, GL_ONE, GL_ONE, GL_ONE) do
-                  glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 10))
+                glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 10))
   pure texture
   where
     genVertexArray glyphs = concatMap genGlyph glyphs
@@ -284,8 +280,7 @@ geometryShaderSource =
 
     uniform float hori_res;
     uniform float vert_res;
-    uniform float tex_width;
-    uniform float tex_height;
+    uniform sampler2D atlas;
 
     out vec2 f_tex_coord;
     out vec4 f_color;
@@ -293,10 +288,11 @@ geometryShaderSource =
     void main() {
       float vw = g_width[0] * 2 / hori_res;
       float vh = g_height[0] * 2 / vert_res;
-      float tw = g_width[0] / tex_width;
-      float th = g_height[0] / tex_height;
+      vec2 pageSize = vec2(textureSize(atlas, 0));
+      float tw = g_width[0] / pageSize.x;
+      float th = g_height[0] / pageSize.y;
       vec4 pos = gl_in[0].gl_Position;
-      vec2 tpos = g_tex_coord[0].xy / vec2(tex_width, tex_height);
+      vec2 tpos = g_tex_coord[0].xy / pageSize;
 
       gl_Position = pos;
       f_tex_coord = tpos;

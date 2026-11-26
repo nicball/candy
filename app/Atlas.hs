@@ -69,7 +69,7 @@ addGlyph atlas gid width height pixels userdata = do
   page@AtlasPage{texture} <- NonEmpty.head <$> readIORef atlas.pages
   Skyline.pack1 page.alloc (Skyline.Pt width height) >>= \case
     Nothing -> do
-      newPage <- newAtlasPage width height
+      newPage <- newAtlasPage (max atlas.width width) (max atlas.height height)
       modifyIORef' atlas.pages (NonEmpty.cons newPage)
       addGlyph atlas gid width height pixels userdata
     Just (Skyline.Pt x y) -> do

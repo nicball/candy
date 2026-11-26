@@ -17,7 +17,7 @@ import Box (drawableBox)
 import Config (ConfigT(..), config)
 import Document (Document, Coord(..), DocumentType(..))
 import Document qualified
-import GL (drawQuadColor, drawQuadTexture, quadFromTopLeftWH, quadToViewport, viewportSlot, posterSingleton, GLSlot(..), Resolution(..), clearViewport, quadSize, quadFromYXRange, quadOverlap, Quad(..), quadPlus)
+import GL (drawQuadColor, drawQuadTexture, quadFromTopLeftWH, quadToViewport, viewportSlot, posterSingleton, GLSlot(..), Resolution(..), clearViewport, quadSize, quadFromYXRange, Quad(..), quadPlus)
 import Nexus (ListenerID)
 import Nexus qualified
 import Refcount (withRefcount)
@@ -90,7 +90,7 @@ instance SendKey DefaultEditorWindow where
           (GMKNone, GLFW.Key'Delete) -> do
             end <- Document.lastCharCoord dew.document
             sels <- filter ((/= end) . (.mark)) . NE.toList . (.value) <$> readIORef dew.selections
-            ivs <- traverse (selToIv dew.document) sels
+            ivs <- forM sels \s -> selToIv dew.document (Selection s.mark s.mark)
             Document.patch (fmap (, "") ivs) dew.document
           (GMKNone, GLFW.Key'Enter) -> sendChar '\n' dew
           _ -> pure ()
@@ -161,8 +161,10 @@ instance Draw DefaultEditorWindow where
     screenXPos <- readIORef dew.screenXPos
     let screenQuad = quadFromTopLeftWH screenXPos screenYPos textRes.w textRes.h
     let textOpt = defaultLayoutOpt{defaultFont=Just cfg.font, width=Just textRes.w}
-    let findFirstGroup p = takeWhile p . dropWhile (not . p)
-    visibleLines <- findFirstGroup (\(_, _, _, quad) -> quadOverlap quad screenQuad) <$> getLineInfo textOpt dew.document
+    lineInfo <- getLineInfo textOpt dew.document
+    let aboveViewport (_, _, _, quad) = quad.bottom < screenQuad.top
+        startsBeforeViewportEnd (_, _, _, quad) = quad.top <= screenQuad.bottom
+        visibleLines = takeWhile startsBeforeViewportEnd (dropWhile aboveViewport lineInfo)
     sels <- (\(p NE.:| xs) -> (True, p) : fmap (False, ) xs) . (.value) <$> readIORef dew.selections
     psel <- NE.head . (.value) <$> readIORef dew.selections
     oldViewport <- getSlot viewportSlot

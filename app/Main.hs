@@ -58,7 +58,7 @@ main = do
       setSlot viewportSlot (ScreenRect 0 0 w h)
 
     redraw wm win = do
-      GLFW.getWindowSize win >>= uncurry (onResize win)
+      GLFW.getFramebufferSize win >>= uncurry (onResize win)
       -- readIORef config >>= \Config{background = Color{..}} ->
       withSlot clearColorSlot nord1 do
         glClear GL_COLOR_BUFFER_BIT

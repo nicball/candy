@@ -210,7 +210,7 @@ mergeSelections = fromList . merge [] . toList
     merge ss [] = reverse ss
     mergeSel a b =
       if selMax a >= selMin b
-        then Just $ turn (Selection (selMin a) (selMax b))
+        then Just $ turn (Selection (selMin a) (max (selMax a) (selMax b)))
         else Nothing
       where turn = if a.anchor > a.mark then turnLeft else id
 
