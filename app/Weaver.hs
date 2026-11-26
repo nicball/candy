@@ -12,9 +12,8 @@ module Weaver
   , layoutTextCachedDefaultFont
   ) where
 
-import Control.Monad (forM, forM_)
+import Control.Exception (bracketOnError)
 import Data.ByteString qualified as BS
-import Data.Map.Strict qualified as Map
 import Data.String.Interpolate (__i)
 import Data.Text (Text)
 import Foreign.C qualified as C
@@ -94,21 +93,8 @@ defaultWeaver = unsafePerformIO newWeaver
 type ColorSpec = [(Int, Int, Color)]
 
 renderLineLayout :: Weaver -> ColorSpec -> LineLayout -> IO Texture
-renderLineLayout weaver colorSpec layout = do
-  texture <- genObject
+renderLineLayout weaver colorSpec layout = bracketOnError genObject deleteObject \texture -> do
   let res = layoutRes layout
-  let glyphs = layoutGlyphs layout
-  atlasGlyphs <- forM glyphs \glyph -> do
-    let font = describeFont glyph.font
-    queryGlyph weaver.atlas (font, glyph.gid) >>= \case
-      Just item -> pure (glyph, item)
-      Nothing -> do
-        image <- renderGlyphCached glyph.font glyph.gid
-        item <- C.withForeignPtr image.pixels \p ->
-          addGlyph weaver.atlas (font, glyph.gid) image.width image.height p
-            AtlasGlyph{width=image.width, height=image.height, xOrigin=image.xOrigin, yOrigin=image.yOrigin}
-        pure (glyph, item)
-  let glyphsByTexture = Map.fromListWith (++) . map (\g -> ((snd g).texture, [g])) $ atlasGlyphs
   bindProgram weaver.program do
     horiRes <- C.withCAString "hori_res" (glGetUniformLocation weaver.program)
     glUniform1f horiRes (fromIntegral res.w)
@@ -118,15 +104,34 @@ renderLineLayout weaver colorSpec layout = do
       withSlot vertexArraySlot weaver.vao do
         withSlot arrayBufferSlot weaver.vbo do
           withSlot blendFuncSlot (GL_ONE, GL_ONE, GL_ONE, GL_ONE) do
-            forM_ (Map.toList glyphsByTexture) \(atlasTexture, glyphItems) -> do
-              withSlot texture2DSlot atlasTexture do
-                glGenerateMipmap GL_TEXTURE_2D
-                let array = genVertexArray glyphItems
-                writeArrayBuffer array
-                glDrawArrays GL_POINTS 0 (fromIntegral (length array `div` 10))
+            withSlot texture2DSlot weaver.atlas.texture do
+              drawGlyphs [] (layoutGlyphs layout)
   pure texture
   where
-    genVertexArray glyphs = concatMap genGlyph glyphs
+    drawGlyphs pending [] = flush pending
+    drawGlyphs pending (glyph : rest) = do
+      let key = (describeFont glyph.font, glyph.gid)
+      queryGlyph weaver.atlas key >>= \case
+        Just item -> drawGlyphs ((glyph, item) : pending) rest
+        Nothing -> do
+          image <- renderGlyphCached glyph.font glyph.gid
+          let insert = C.withForeignPtr image.pixels \p ->
+                addGlyph weaver.atlas key image.width image.height p
+                  AtlasGlyph{width=image.width, height=image.height, xOrigin=image.xOrigin, yOrigin=image.yOrigin}
+          insert >>= \case
+            Just item -> drawGlyphs ((glyph, item) : pending) rest
+            Nothing -> do
+              flush pending
+              clearAtlas weaver.atlas
+              insert >>= \case
+                Just item -> drawGlyphs [(glyph, item)] rest
+                Nothing -> ioError . userError $ "Glyph " ++ show key ++ " does not fit in an empty atlas: " ++ show (image.width, image.height)
+
+    flush [] = pure ()
+    flush pending = do
+      glGenerateMipmap GL_TEXTURE_2D
+      writeArrayBuffer (concatMap genGlyph (reverse pending))
+      glDrawArrays GL_POINTS 0 (fromIntegral (length pending))
     genGlyph (glyph, item) = map fromIntegral
       [ glyph.x + item.userdata.xOrigin
       , glyph.y - item.userdata.yOrigin

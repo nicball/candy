@@ -1,52 +1,37 @@
 module Atlas
- ( Atlas(width, height)
+ ( Atlas(texture)
  , AtlasItem(..)
  , newAtlas
  , deleteAtlas
+ , clearAtlas
  , queryGlyph
  , addGlyph
  ) where
 
 import Control.Exception (bracket)
+import Control.Monad.Primitive (PrimState)
+import Data.Atlas qualified as Skyline
+import Data.IORef
+import Data.Map.Strict qualified as Map
 import Foreign qualified as C
 import Graphics.GL
-import Data.Map.Strict qualified as Map
-import Data.Atlas qualified as Skyline
-import Control.Monad.Primitive (PrimState)
-import Data.IORef
-import Data.List.NonEmpty qualified as NonEmpty
-import Control.Monad ((<=<))
-import Data.Monoid (First(..))
 
 import GL (Texture, GLObject(..), texture2DSlot, withSlot)
 
 data Atlas k a = Atlas
-  { pages :: IORef (NonEmpty.NonEmpty (AtlasPage k a))
-  , width :: Int
-  , height :: Int
-  }
-
-data AtlasPage k a = AtlasPage
-  { glyphIdToPos :: IORef (Map.Map k (AtlasItem a))
-  , texture :: Texture
+  { texture :: Texture
   , alloc :: Skyline.Atlas (PrimState IO)
+  , glyphs :: IORef (Map.Map k (AtlasItem a))
   }
 
 data AtlasItem a = AtlasItem
   { x :: Int
   , y :: Int
-  , texture :: Texture
   , userdata :: a
   }
 
 newAtlas :: Int -> Int -> IO (Atlas k a)
 newAtlas width height = do
-  page <- newAtlasPage width height
-  pages <- newIORef (NonEmpty.singleton page)
-  pure Atlas{..}
-
-newAtlasPage :: Int -> Int -> IO (AtlasPage k a)
-newAtlasPage width height = do
   texture <- genObject
   withSlot texture2DSlot texture do
     glPixelStorei GL_UNPACK_ALIGNMENT 1
@@ -54,28 +39,31 @@ newAtlasPage width height = do
       glTexImage2D GL_TEXTURE_2D 0 GL_RED (fromIntegral width) (fromIntegral height) 0 GL_RED GL_UNSIGNED_BYTE
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
-  glyphIdToPos <- newIORef Map.empty
+  glyphs <- newIORef Map.empty
   alloc <- Skyline.create width height
-  pure AtlasPage{..}
+  pure Atlas{..}
 
 deleteAtlas :: Atlas k a -> IO ()
-deleteAtlas = mapM_ (deleteObject . (.texture)) <=< readIORef . (.pages)
+deleteAtlas atlas = deleteObject atlas.texture
+
+-- Invalidates every AtlasItem. New glyph uploads overwrite the reused regions.
+clearAtlas :: Atlas k a -> IO ()
+clearAtlas atlas = do
+  Skyline.reset atlas.alloc
+  writeIORef atlas.glyphs Map.empty
 
 queryGlyph :: Ord k => Atlas k a -> k -> IO (Maybe (AtlasItem a))
-queryGlyph atlas key = getFirst <$> (foldMap (fmap (First . Map.lookup key) . readIORef . (.glyphIdToPos)) =<< readIORef atlas.pages)
+queryGlyph atlas key = Map.lookup key <$> readIORef atlas.glyphs
 
-addGlyph :: Ord k => Atlas k a -> k -> Int -> Int -> C.Ptr () -> a -> IO (AtlasItem a)
+-- Nothing means the glyph could not be packed into the current page.
+addGlyph :: Ord k => Atlas k a -> k -> Int -> Int -> C.Ptr () -> a -> IO (Maybe (AtlasItem a))
 addGlyph atlas gid width height pixels userdata = do
-  page@AtlasPage{texture} <- NonEmpty.head <$> readIORef atlas.pages
-  Skyline.pack1 page.alloc (Skyline.Pt width height) >>= \case
-    Nothing -> do
-      newPage <- newAtlasPage (max atlas.width width) (max atlas.height height)
-      modifyIORef' atlas.pages (NonEmpty.cons newPage)
-      addGlyph atlas gid width height pixels userdata
+  Skyline.pack1 atlas.alloc (Skyline.Pt width height) >>= \case
+    Nothing -> pure Nothing
     Just (Skyline.Pt x y) -> do
       let item = AtlasItem{..}
-      modifyIORef' page.glyphIdToPos (Map.insert gid item)
-      withSlot texture2DSlot texture do
+      withSlot texture2DSlot atlas.texture do
         glPixelStorei GL_UNPACK_ALIGNMENT 1
         glTexSubImage2D GL_TEXTURE_2D 0 (fromIntegral x) (fromIntegral y) (fromIntegral width) (fromIntegral height) GL_RED GL_UNSIGNED_BYTE pixels
-      pure item
+      modifyIORef' atlas.glyphs (Map.insert gid item)
+      pure (Just item)
